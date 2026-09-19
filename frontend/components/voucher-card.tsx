@@ -131,7 +131,7 @@ export function VoucherCard({
       <div className="flex items-center gap-2 border-t border-brand-50 px-4 py-2.5">
         <DemoBadge tone="soft" label="Avalanche Fuji · 链上凭证" />
         <a
-          href={explorerToken(CONTRACTS.travelVoucher, voucher.tokenId)}
+          href={explorerToken(CONTRACTS.travelVoucher)}
           target="_blank"
           rel="noopener noreferrer"
           className="ml-auto text-[11px] font-bold text-brand-700 hover:underline"

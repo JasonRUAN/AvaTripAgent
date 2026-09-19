@@ -399,7 +399,9 @@ type AttractionOffer = {
 
 - 卡片按类型分组，显示状态徽章（`有效` / `已核销` / `已作废`）
 - 每张卡一个二维码（内容 = `https://<host>/verify/{tokenId}`）
-- 点击跳转 Explorer（`subnets-test.avax.network/c-chain/token/...`）
+- 点击跳转 Explorer（`subnets-test.avax.network/c-chain/token/{合约地址}`）。
+  注意：官方 Explorer **没有单个 NFT 实例的路由**，`/token/{合约}/instance/{tokenId}` 会 404（旧 Snowtrace 格式），
+  所以只能落到合约级 Token Details 页，再在页内 Transfers 表按 `TOKEN ID` 定位
 
 ### 8.3 验证页 `/verify/[tokenId]`
 

@@ -132,7 +132,7 @@ export default function VerifyPage() {
             <div className="flex flex-wrap items-center gap-2">
               <DemoBadge tone="soft" label="Avalanche Fuji · 链上凭证" />
               <a
-                href={explorerToken(CONTRACTS.travelVoucher, tokenId)}
+                href={explorerToken(CONTRACTS.travelVoucher)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[11px] font-bold text-brand-700 hover:underline"

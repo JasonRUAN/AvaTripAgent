@@ -53,10 +53,16 @@ export function explorerAddress(address?: Address | string): string {
   return `https://subnets-test.avax.network/c-chain/address/${address}`;
 }
 
-/** Fuji C-Chain NFT 链接 */
-export function explorerToken(contract?: string, tokenId?: string): string {
-  if (!contract || !tokenId) return "https://subnets-test.avax.network/c-chain";
-  return `https://subnets-test.avax.network/c-chain/token/${contract}/instance/${tokenId}`;
+/**
+ * Fuji C-Chain NFT 集合页链接。
+ *
+ * 注意：Avalanche 官方 Explorer（subnets-test.avax.network）**没有单个 NFT 实例的路由**，
+ * `/c-chain/token/{合约}/instance/{tokenId}` 会直接渲染 404 页（那是 Etherscan / 旧 Snowtrace 的格式）。
+ * 实测只有合约级的 Token Details 页可用，凭证本身要在页内 Transfers 表里按 TOKEN ID 定位。
+ */
+export function explorerToken(contract?: string): string {
+  if (!contract) return "https://subnets-test.avax.network/c-chain";
+  return `https://subnets-test.avax.network/c-chain/token/${contract}`;
 }
 
 /** 分钟数 → "3h15m" */
