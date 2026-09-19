@@ -37,6 +37,9 @@ export default function MerchantPage() {
     };
   }, [tokenId]);
 
+  // 仅 Issued 状态可核销；Redeemed / Voided 均视为不可重复使用
+  const unavailable = detail !== null && detail.status !== "Issued";
+
   const redeem = async () => {
     setBusy(true);
     setMessage(null);
@@ -108,12 +111,24 @@ export default function MerchantPage() {
 
           <button
             type="button"
-            disabled={busy || !tokenId}
+            disabled={busy || !tokenId || unavailable}
             onClick={redeem}
             className="sky-gradient flex h-12 w-full cursor-pointer items-center justify-center rounded-2xl text-base font-bold text-white shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {busy ? "核销中…" : "② 确认核销"}
+            {busy
+              ? "核销中…"
+              : unavailable
+                ? detail?.status === "Voided"
+                  ? "凭证已作废"
+                  : "已核销 · 不可重复使用"
+                : "② 确认核销"}
           </button>
+
+          {unavailable && !busy && !message ? (
+            <p className="rounded-xl bg-ink-100 px-3 py-2 text-xs font-semibold text-ink-500">
+              该凭证已被核销或作废，无法再次核销
+            </p>
+          ) : null}
 
           {message ? (
             <p
