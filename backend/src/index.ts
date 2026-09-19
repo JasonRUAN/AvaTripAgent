@@ -7,7 +7,7 @@ import { agentBalances } from "./chain/clients";
 import { env, hasChain, hasLLM } from "./env";
 import { runPlan } from "./orchestrator/planner";
 import { getOrderChannel, getRunChannel, touch } from "./sse";
-import { orders, quotes, runs, vouchers, listVouchersByHolder } from "./store";
+import { orders, quotes, runs, listVouchersByHolder } from "./store";
 import type { Quote, SettlementEvent, StreamEvent, TripRequest } from "./types";
 
 const app = new Hono();
@@ -228,8 +228,12 @@ app.post("/api/vouchers/:tokenId/redeem", async (c) => {
 });
 
 /** ERC-721 metadata —— 合约 tokenURI 指向这里 */
-app.get("/api/vouchers/:tokenId/metadata", (c) => {
-  const voucher = vouchers.get(c.req.param("tokenId"));
+app.get("/api/vouchers/:tokenId/metadata", async (c) => {
+  const tokenId = c.req.param("tokenId");
+  // 与 /api/vouchers/:tokenId 一致：内存未命中（后端重启）时回源链上重建，
+  // 否则 tokenURI 指向的 metadata 会一直 404，钱包/前端都拿不到 JSON。
+  const { ensureVoucher } = await import("./chain/voucher");
+  const voucher = await ensureVoucher(tokenId);
   if (!voucher?.metadata) return c.json({ error: "METADATA_NOT_FOUND" }, 404);
   return c.json(voucher.metadata);
 });
