@@ -2,5 +2,23 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+solc = "0.8.30"
+optimizer = true
+optimizer_runs = 200
 
-# See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
+remappings = [
+    "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
+    "forge-std/=lib/forge-std/src/",
+]
+
+[rpc_endpoints]
+fuji = "https://api.avax-test.network/ext/bc/C/rpc"
+
+# Fuji 上用 Routescan 的 Etherscan 兼容接口做验证
+[etherscan]
+fuji = { key = "${SNOWTRACE_API_KEY}", url = "https://api.routescan.io/v2/network/testnet/evm/43113/etherscan/api" }
+
+[fmt]
+line_length = 100
+tab_width = 4
+bracket_spacing = false

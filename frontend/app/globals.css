@@ -1,26 +1,316 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* ==========================================================================
+   AvaTrip Agent — 「晴空旅行簿」浅色蓝白主题
+   Tailwind v4 主题层：所有颜色 / 圆角 / 阴影 / 动效在此集中声明
+   ========================================================================== */
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+@theme {
+  /* ---------- 品牌蓝 ---------- */
+  --color-brand-50: #f4f9ff;
+  --color-brand-100: #e9f2ff;
+  --color-brand-200: #cfe4ff;
+  --color-brand-300: #a8cffa;
+  --color-brand-400: #7ab4f8;
+  --color-brand-500: #4c9aff;
+  --color-brand-600: #2e7bf6;
+  --color-brand-700: #0b5fd1;
+  --color-brand-800: #0a4ba6;
+  --color-brand-900: #0a3c83;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+  /* ---------- 天空背景 ---------- */
+  --color-sky-bg: #ffffff;
+  --color-sky-tint: #f4f9ff;
+  --color-sky-mist: #e9f2ff;
+
+  /* ---------- 文字 ---------- */
+  --color-ink-900: #0e2a4e;
+  --color-ink-700: #2b4a72;
+  --color-ink-500: #4a6a93;
+  --color-ink-300: #8aa4c4;
+  --color-ink-100: #b9cbe0;
+
+  /* ---------- 功能色 ---------- */
+  --color-mint-500: #17c964;
+  --color-mint-100: #e6f9ec;
+  --color-amber-500: #ffb020;
+  --color-amber-100: #fff4e0;
+  --color-coral-500: #ff5a5f;
+  --color-coral-100: #ffeaea;
+
+  /* ---------- 凭证类别色 ---------- */
+  --color-cat-flight: #2e7bf6;
+  --color-cat-hotel: #7c6bf5;
+  --color-cat-attraction: #17c964;
+  --color-cat-dining: #ff8a3d;
+
+  /* ---------- 字体 ---------- */
+  --font-display: var(--font-fredoka), "Yuanti SC", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-sans: var(--font-nunito), "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  /* ---------- 圆角：整体偏大，营造圆润活泼 ---------- */
+  --radius-xs: 0.5rem;
+  --radius-sm: 0.75rem;
+  --radius-md: 1rem;
+  --radius-lg: 1.25rem;
+  --radius-xl: 1.5rem;
+  --radius-2xl: 2rem;
+  --radius-3xl: 2.5rem;
+
+  /* ---------- 柔和长阴影 ---------- */
+  --shadow-soft: 0 2px 8px -2px rgb(46 123 246 / 0.08),
+    0 8px 24px -8px rgb(46 123 246 / 0.14);
+  --shadow-lift: 0 4px 12px -2px rgb(46 123 246 / 0.12),
+    0 16px 40px -12px rgb(46 123 246 / 0.22);
+  --shadow-card: 0 1px 2px 0 rgb(14 42 78 / 0.04),
+    0 10px 30px -12px rgb(14 42 78 / 0.12);
+  --shadow-glow: 0 0 0 4px rgb(46 123 246 / 0.12),
+    0 12px 32px -12px rgb(46 123 246 / 0.35);
+
+  /* ---------- 动效 ---------- */
+  --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  --animate-fade-up: fade-up 0.32s var(--ease-pop) both;
+  --animate-pop-in: pop-in 0.36s var(--ease-pop) both;
+  --animate-breathe: breathe 1.8s ease-in-out infinite;
+  --animate-drift: drift 7s ease-in-out infinite;
+  --animate-caret: caret 1s steps(2, start) infinite;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-stamp: stamp 0.5s var(--ease-pop) both;
+
+  @keyframes fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: scale(0.94);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 0.45;
+      transform: scale(0.85);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.15);
+    }
+  }
+
+  @keyframes drift {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+    50% {
+      transform: translate3d(0, -14px, 0) scale(1.06);
+    }
+  }
+
+  @keyframes caret {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0;
+    }
+  }
+
+  @keyframes shimmer {
+    from {
+      background-position: -200% 0;
+    }
+    to {
+      background-position: 200% 0;
+    }
+  }
+
+  @keyframes stamp {
+    0% {
+      opacity: 0;
+      transform: scale(1.6) rotate(-16deg);
+    }
+    70% {
+      opacity: 1;
+      transform: scale(0.94) rotate(-8deg);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1) rotate(-8deg);
+    }
   }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ==========================================================================
+   基础层
+   ========================================================================== */
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-sky-tint);
+    background-image:
+      radial-gradient(
+        circle at 12% 8%,
+        rgb(233 242 255 / 0.9) 0,
+        transparent 45%
+      ),
+      radial-gradient(
+        circle at 88% 4%,
+        rgb(207 228 255 / 0.7) 0,
+        transparent 40%
+      ),
+      radial-gradient(
+        circle at 78% 92%,
+        rgb(244 249 255 / 0.9) 0,
+        transparent 45%
+      );
+    background-attachment: fixed;
+    color: var(--color-ink-900);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.65;
+  }
+
+  /* 全站统一滚动条风格 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-brand-200) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--color-brand-200);
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--color-brand-300);
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-brand-600);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: var(--color-brand-200);
+    color: var(--color-ink-900);
+  }
+
+  /* 尊重系统「减少动态效果」偏好 */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* ==========================================================================
+   可复用组件类
+   ========================================================================== */
+
+@utility glass-card {
+  background-color: rgb(255 255 255 / 0.82);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  border: 1px solid rgb(255 255 255 / 0.7);
+  box-shadow: var(--shadow-card);
+}
+
+@utility sky-gradient {
+  background-image: linear-gradient(
+    135deg,
+    var(--color-brand-600) 0%,
+    var(--color-brand-500) 55%,
+    var(--color-brand-400) 100%
+  );
+}
+
+@utility text-brand-gradient {
+  background-image: linear-gradient(
+    100deg,
+    var(--color-brand-700) 0%,
+    var(--color-brand-500) 60%,
+    var(--color-cat-hotel) 100%
+  );
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
+}
+
+@utility skeleton-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--color-brand-100) 0%,
+    var(--color-sky-mist) 50%,
+    var(--color-brand-100) 100%
+  );
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
+
+/* 凭证卡撕口（虚线分隔 + 上下半圆缺口） */
+@layer components {
+  .ticket-perforation {
+    position: relative;
+  }
+
+  .ticket-perforation::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background-image: linear-gradient(
+      to bottom,
+      var(--color-brand-200) 0 6px,
+      transparent 6px 12px
+    );
+    background-size: 2px 12px;
+    background-repeat: repeat-y;
+  }
+
+  .ticket-notch {
+    position: absolute;
+    width: 18px;
+    height: 18px;
+    border-radius: 9999px;
+    background-color: var(--color-sky-tint);
+  }
 }
