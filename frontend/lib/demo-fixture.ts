@@ -4,7 +4,6 @@ import { toUnits } from "./format";
 import type {
   Address,
   AttractionOffer,
-  CategoryCode,
   DiningOffer,
   FlightOffer,
   HotelOffer,
@@ -12,7 +11,6 @@ import type {
   Quote,
   StreamEvent,
   TripRequest,
-  VoucherDetail,
 } from "./types";
 
 /**
@@ -381,96 +379,6 @@ export function buildDemoQuote(request: TripRequest): Quote {
     totalUsd,
     budgetState,
   };
-}
-
-/**
- * 演示凭证：后端不可达（或尚未产生真实凭证）时，
- * 「我的凭证」页用它保证故事完整。
- */
-export function buildDemoVouchers(holder: Address): VoucherDetail[] {
-  const now = Math.floor(Date.now() / 1000);
-  const validTo = now + 90 * 24 * 3600;
-
-  const seeds: {
-    category: CategoryCode;
-    agent: Address;
-    code: string;
-    title: string;
-    details: Record<string, string>;
-  }[] = [
-    {
-      category: 0,
-      agent: DEMO_AGENTS.flight,
-      code: "PNR 7KQ2ZP",
-      title: "NH959 上海浦东 → 东京羽田",
-      details: {
-        航司: "ANA 全日空",
-        机型: "Boeing 787-8",
-        去程: "NH959 PVG T2 → HND T3 · 2026-10-01 09:25 起飞",
-        返程: "NH960 HND T3 → PVG T2 · 2026-10-05 18:10 起飞",
-        舱位: "经济舱 · 2 人",
-      },
-    },
-    {
-      category: 1,
-      agent: DEMO_AGENTS.hotel,
-      code: "CONF HX-88213",
-      title: "新宿格拉斯丽酒店",
-      details: {
-        星级: "4 星",
-        地址: "东京都新宿区歌舞伎町1-19-1",
-        房型: "高级双床房 28㎡",
-        入住: "2026-10-01 15:00",
-        退房: "2026-10-05 11:00",
-      },
-    },
-    {
-      category: 2,
-      agent: DEMO_AGENTS.attraction,
-      code: "TCK-9021",
-      title: "teamLab Planets TOKYO",
-      details: {
-        场次: "2026-10-02 10:30 入场",
-        开放: "10:00-19:00",
-        时长: "约 120 分钟",
-        人数: "2 人",
-      },
-    },
-    {
-      category: 3,
-      agent: DEMO_AGENTS.dining,
-      code: "RSV-4471",
-      title: "鮨 うえの（银座）",
-      details: {
-        菜系: "江户前寿司",
-        时间: "2026-10-02 18:30",
-        人数: "2 人",
-        备注: "吧台席，需提前 10 分钟到店",
-      },
-    },
-  ];
-
-  return seeds.map((seed, index) => ({
-    tokenId: String(index + 1),
-    orderId: "1",
-    provider: seed.agent,
-    providerName: DEMO_AGENT_NAMES[seed.agent],
-    holder,
-    category: seed.category,
-    code: seed.code,
-    title: seed.title,
-    metadataHash: hashLabel(`demo-voucher-${index}`),
-    validFrom: now,
-    validTo,
-    status: "Issued" as const,
-    metadata: {
-      name: seed.title,
-      description: "AvaTrip 演示凭证（非真实可预订凭证）",
-      image: "",
-      attributes: [],
-      details: seed.details,
-    },
-  }));
 }
 
 /**

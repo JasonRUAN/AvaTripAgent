@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { DemoBadge } from "./demo-badge";
 import { WalletButton } from "./wallet-button";
 
 const NAV = [
@@ -49,7 +48,6 @@ export function SiteHeader() {
         </nav>
 
         <div className="ml-auto flex items-center gap-3">
-          <DemoBadge />
           <WalletButton />
         </div>
       </div>

@@ -181,16 +181,15 @@ export async function redeemVoucher(
     const { voucher } = contractAddresses();
     const id = BigInt(tokenId);
 
-    // getVoucher 返回结构体，viem 按位置解码成数组：
-    // [orderId, provider, holder, category, code, title, metadataHash, validFrom, validTo, status]
+    // getVoucher 返回单个 struct（含 string 动态成员），viem 解成带字段名的对象
     const onChain = await publicClient.readContract({
       address: voucher,
       abi: VOUCHER_ABI,
       functionName: "getVoucher",
       args: [id],
     });
-    const onChainProvider = onChain[1];
-    const onChainStatus = Number(onChain[9]);
+    const onChainProvider = onChain.provider;
+    const onChainStatus = Number(onChain.status);
 
     if (onChainProvider === ZERO_ADDRESS) {
       throw new Error(

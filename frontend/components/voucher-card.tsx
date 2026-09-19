@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import QRCode from "react-qr-code";
 import { DemoBadge } from "./demo-badge";
+import { CONTRACTS } from "@/lib/contracts";
 import { explorerToken, formatDate, maskAddress } from "@/lib/format";
 import type { VoucherDetail } from "@/lib/types";
 
@@ -49,10 +50,15 @@ export function VoucherCard({
   const status = STATUS_STYLE[voucher.status];
   const redeemed = voucher.status !== "Issued";
 
-  const [url, setUrl] = useState("");
-  useEffect(() => {
-    setUrl(`${window.location.origin}/verify/${voucher.tokenId}`);
-  }, [voucher.tokenId]);
+  // 二维码需要绝对 URL，而 origin 只有运行时才拿得到：
+  // 用 useSyncExternalStore 读取，避免 effect 内 setState 的级联渲染与 hydration 不一致
+  const subscribe = useCallback(() => () => {}, []);
+  const getOrigin = useCallback(() => window.location.origin, []);
+  const getServerOrigin = useCallback(() => "", []);
+  const origin = useSyncExternalStore(subscribe, getOrigin, getServerOrigin);
+  const verifyUrl = origin
+    ? `${origin}/verify/${voucher.tokenId}`
+    : `avatrip://voucher/${voucher.tokenId}`;
 
   const details = Object.entries(voucher.metadata?.details ?? {}).slice(0, 5);
 
@@ -109,7 +115,7 @@ export function VoucherCard({
         {showQr ? (
           <div className="flex shrink-0 flex-col items-center gap-1.5">
             <div className="rounded-xl bg-white p-1.5 shadow-soft">
-              <QRCode value={url || `avatrip://voucher/${voucher.tokenId}`} size={72} />
+              <QRCode value={verifyUrl} size={72} />
             </div>
             <span className="text-[10px] font-bold text-ink-300">
               #{voucher.tokenId}
@@ -123,12 +129,9 @@ export function VoucherCard({
       <span className="ticket-notch -right-2 top-[62px]" />
 
       <div className="flex items-center gap-2 border-t border-brand-50 px-4 py-2.5">
-        <DemoBadge tone="soft" label="演示凭证" />
+        <DemoBadge tone="soft" label="Avalanche Fuji · 链上凭证" />
         <a
-          href={explorerToken(
-            process.env.NEXT_PUBLIC_VOUCHER_ADDRESS ?? "",
-            voucher.tokenId
-          )}
+          href={explorerToken(CONTRACTS.travelVoucher, voucher.tokenId)}
           target="_blank"
           rel="noopener noreferrer"
           className="ml-auto text-[11px] font-bold text-brand-700 hover:underline"

@@ -141,17 +141,25 @@ export const VOUCHER_ABI = [
     name: "getVoucher",
     stateMutability: "view",
     inputs: [{ name: "tokenId", type: "uint256" }],
+    // 合约返回的是单个 struct（Voucher 含 string 动态成员），ABI 必须声明成 tuple：
+    // 写成 10 个独立返回值会整体错位，viem 解码时直接抛 not in safe integer range
     outputs: [
-      { name: "orderId", type: "uint256" },
-      { name: "provider", type: "address" },
-      { name: "holder", type: "address" },
-      { name: "category", type: "uint8" },
-      { name: "code", type: "string" },
-      { name: "title", type: "string" },
-      { name: "metadataHash", type: "bytes32" },
-      { name: "validFrom", type: "uint64" },
-      { name: "validTo", type: "uint64" },
-      { name: "status", type: "uint8" },
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "orderId", type: "uint256" },
+          { name: "provider", type: "address" },
+          { name: "holder", type: "address" },
+          { name: "category", type: "uint8" },
+          { name: "code", type: "string" },
+          { name: "title", type: "string" },
+          { name: "metadataHash", type: "bytes32" },
+          { name: "validFrom", type: "uint64" },
+          { name: "validTo", type: "uint64" },
+          { name: "status", type: "uint8" },
+        ],
+      },
     ],
   },
   {

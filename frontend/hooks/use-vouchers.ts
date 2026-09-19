@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useAccount } from "wagmi";
-import { BACKEND_URL } from "@/lib/contracts";
-import { buildDemoVouchers } from "@/lib/demo-fixture";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAccount, usePublicClient } from "wagmi";
+import { fetchHolderVouchers } from "@/lib/chain-vouchers";
+import { isDeployed } from "@/lib/contracts";
 import type { VoucherDetail } from "@/lib/types";
 
 const EMPTY: VoucherDetail[] = [];
@@ -11,53 +11,50 @@ const EMPTY: VoucherDetail[] = [];
 /**
  * 凭证列表。
  *
- * 后端是凭证明细的唯一来源（链上只存 hash）；
- * 后端不可达或未连接钱包时退回演示凭证，保证页面永远有内容。
+ * 唯一数据源是 Fuji 上的 `TravelVoucher` 合约（前端直读链上），
+ * 不再提供任何演示 / mock 兜底：读不到就是空列表或可读的错误提示。
  */
 export function useVouchers() {
   const { address } = useAccount();
-  /** 后端返回的真实凭证明细；未连接钱包时视为空 */
+  const client = usePublicClient();
+
   const [fetched, setFetched] = useState<VoucherDetail[]>([]);
   const [loading, setLoading] = useState(false);
-  /** true = 后端网络不可达；后端可达但列表为空不算 offline */
-  const [offline, setOffline] = useState(false);
-  /** true = 当前展示的是演示数据（后端无真实记录或不可达） */
-  const [demo, setDemo] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   // 未连接钱包时直接推导为空列表，避免在 effect 里同步 setState
   const items = address ? fetched : EMPTY;
 
   useEffect(() => {
-    if (!address) return;
+    if (!address || !client) return;
 
     let cancelled = false;
 
     // 放入微任务，避免在 effect 内同步 setState 触发级联渲染
     Promise.resolve().then(async () => {
       if (cancelled) return;
+
+      if (!isDeployed) {
+        setFetched(EMPTY);
+        setLoading(false);
+        setError("合约尚未部署，无法读取链上凭证");
+        return;
+      }
+
       setLoading(true);
+      setError(null);
 
       try {
-        const response = await fetch(`${BACKEND_URL}/api/vouchers?address=${address}`);
-        if (!response.ok) throw new Error(String(response.status));
-        const payload = (await response.json()) as { vouchers: VoucherDetail[] };
+        const list = await fetchHolderVouchers(client, address);
         if (cancelled) return;
-
-        setOffline(false);
-        if (payload.vouchers.length > 0) {
-          setFetched(payload.vouchers);
-          setDemo(false);
-        } else {
-          // 后端可达但无记录（如发券后后端重启，内存明细已清空），
-          // 退回演示数据但不提示"未连接"。
-          setFetched(buildDemoVouchers(address));
-          setDemo(true);
-        }
-      } catch {
+        setFetched(list);
+      } catch (cause) {
         if (cancelled) return;
-        setFetched(buildDemoVouchers(address));
-        setOffline(true);
-        setDemo(true);
+        setFetched(EMPTY);
+        setError(
+          cause instanceof Error ? cause.message : "链上凭证读取失败，请稍后重试"
+        );
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -66,7 +63,9 @@ export function useVouchers() {
     return () => {
       cancelled = true;
     };
-  }, [address]);
+  }, [address, client, reloadKey]);
+
+  const refresh = useCallback(() => setReloadKey((key) => key + 1), []);
 
   const grouped = useMemo(() => {
     const groups: Record<number, VoucherDetail[]> = { 0: [], 1: [], 2: [], 3: [] };
@@ -85,5 +84,5 @@ export function useVouchers() {
     [items]
   );
 
-  return { address, items, grouped, stats, loading, offline, demo };
+  return { address, items, grouped, stats, loading, error, refresh };
 }

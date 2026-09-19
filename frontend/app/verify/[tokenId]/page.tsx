@@ -130,7 +130,7 @@ export default function VerifyPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <DemoBadge tone="soft" label="演示凭证" />
+              <DemoBadge tone="soft" label="Avalanche Fuji · 链上凭证" />
               <a
                 href={explorerToken(CONTRACTS.travelVoucher, tokenId)}
                 target="_blank"

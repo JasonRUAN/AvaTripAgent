@@ -1,12 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { DemoBadge } from "@/components/demo-badge";
 import { CATEGORY_STYLE, VoucherCard } from "@/components/voucher-card";
 import { WalletButton } from "@/components/wallet-button";
 import { useVouchers } from "@/hooks/use-vouchers";
 
 export default function VouchersPage() {
-  const { address, grouped, stats, loading, offline, demo } = useVouchers();
+  const { address, items, grouped, stats, loading, error, refresh } = useVouchers();
 
   if (!address) {
     return (
@@ -35,11 +36,17 @@ export default function VouchersPage() {
             每张凭证都是 Avalanche Fuji 上的 ERC-721，二维码可直接给商户扫码核销
           </p>
         </div>
-        {offline ? (
-          <DemoBadge tone="warn" label="演示凭证 · 后端未连接" />
-        ) : demo ? (
-          <DemoBadge tone="soft" label="演示凭证 · 后端暂无记录（重启后明细不保留）" />
-        ) : null}
+        <div className="flex items-center gap-2">
+          {error ? <DemoBadge tone="warn" label={error} /> : null}
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={loading}
+            className="cursor-pointer rounded-full border border-brand-200 bg-white/90 px-3.5 py-2 text-xs font-bold text-ink-700 shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-lift disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {loading ? "读取中…" : "刷新链上数据"}
+          </button>
+        </div>
       </div>
 
       <div className="mb-5 grid grid-cols-3 gap-3">
@@ -65,6 +72,42 @@ export default function VouchersPage() {
           {[0, 1, 2, 3].map((i) => (
             <div key={i} className="h-52 rounded-2xl skeleton-shimmer" />
           ))}
+        </div>
+      ) : null}
+
+      {!loading && error ? (
+        <div className="rounded-3xl border border-dashed border-coral-200 bg-white/60 px-6 py-14 text-center">
+          <span className="text-4xl">⚠️</span>
+          <p className="mt-3 text-sm font-bold text-ink-700">链上凭证读取失败</p>
+          <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-ink-500">
+            {error}
+          </p>
+          <button
+            type="button"
+            onClick={refresh}
+            className="mt-4 cursor-pointer rounded-full sky-gradient px-4 py-2 text-xs font-bold text-white shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-glow"
+          >
+            重新读取
+          </button>
+        </div>
+      ) : null}
+
+      {!loading && !error && items.length === 0 ? (
+        <div className="rounded-3xl border border-dashed border-brand-200 bg-white/60 px-6 py-14 text-center">
+          <span className="text-4xl">🎫</span>
+          <p className="mt-3 text-sm font-bold text-ink-700">
+            该地址还没有链上凭证
+          </p>
+          <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-ink-500">
+            完成一次行程支付并分账后，服务商 Agent 会把机票 / 酒店 / 门票 /
+            餐饮凭证签发到这个地址。
+          </p>
+          <Link
+            href="/"
+            className="mt-4 inline-block rounded-full sky-gradient px-4 py-2 text-xs font-bold text-white shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-glow"
+          >
+            去规划行程
+          </Link>
         </div>
       ) : null}
 

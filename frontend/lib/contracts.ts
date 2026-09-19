@@ -83,9 +83,13 @@ export const VOUCHER_ABI = parseAbi([
   "function void(uint256 tokenId)",
   "function isValid(uint256 tokenId) view returns (bool)",
   "function tokenURI(uint256 tokenId) view returns (string)",
-  "function getVoucher(uint256 tokenId) view returns (uint256 orderId, address provider, address holder, uint8 category, string code, string title, bytes32 metadataHash, uint64 validFrom, uint64 validTo, uint8 status)",
+  // Voucher 含 string（动态成员），合约返回的是「单个 struct」：
+  // ABI 里第一个字是指向 tuple 的偏移量，绝不能写成 10 个独立返回值，
+  // 否则解码整体错位（viem 会在 uint64 上抛 not in safe integer range）
+  "function getVoucher(uint256 tokenId) view returns ((uint256 orderId, address provider, address holder, uint8 category, string code, string title, bytes32 metadataHash, uint64 validFrom, uint64 validTo, uint8 status))",
   "function balanceOf(address owner) view returns (uint256)",
-  "function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)",
+  // 合约是普通 ERC-721（非 Enumerable），只能靠 nextTokenId + ownerOf 枚举持有者
+  "function nextTokenId() view returns (uint256)",
   "event VoucherIssued(uint256 indexed tokenId, address indexed provider, address indexed holder, uint8 category, string code)",
 ]);
 
