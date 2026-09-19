@@ -183,9 +183,16 @@ app.get("/api/vouchers", (c) => {
   return c.json({ vouchers: listVouchersByHolder(address) });
 });
 
-app.get("/api/vouchers/:tokenId", (c) => {
-  const voucher = vouchers.get(c.req.param("tokenId"));
-  if (!voucher) return c.json({ error: "VOUCHER_NOT_FOUND" }, 404);
+app.get("/api/vouchers/:tokenId", async (c) => {
+  const tokenId = c.req.param("tokenId");
+  console.log(`[GET /api/vouchers/${tokenId}] 查询凭证`);
+  // 内存未命中时回源链上（后端重启后仍可查到已签发的凭证）
+  const { ensureVoucher } = await import("./chain/voucher");
+  const voucher = await ensureVoucher(tokenId);
+  if (!voucher) {
+    console.warn(`[GET /api/vouchers/${tokenId}] 未找到 → 返回 404 VOUCHER_NOT_FOUND`);
+    return c.json({ error: "VOUCHER_NOT_FOUND" }, 404);
+  }
   return c.json(voucher);
 });
 
@@ -194,12 +201,18 @@ app.post("/api/vouchers/:tokenId/redeem", async (c) => {
   const tokenId = c.req.param("tokenId");
   const body = (await c.req.json().catch(() => null)) as { provider?: string } | null;
   const which = body?.provider;
+  console.log(`[POST /api/vouchers/${tokenId}/redeem] provider=${which ?? "(缺失)"}`);
 
   if (which !== "flight" && which !== "hotel" && which !== "attraction" && which !== "dining") {
     return c.json({ error: "INVALID_PROVIDER" }, 400);
   }
 
-  if (!vouchers.has(tokenId)) {
+  // 不能只看进程内索引：凭证是链上资产，内存没有时先回源链上确认，
+  // 否则后端重启后所有已签发凭证都会被误判成「凭证不存在」。
+  const { ensureVoucher } = await import("./chain/voucher");
+  const detail = await ensureVoucher(tokenId);
+  if (!detail) {
+    console.warn(`[POST /api/vouchers/${tokenId}/redeem] 未找到 → 返回 404 VOUCHER_NOT_FOUND`);
     return c.json({ error: "VOUCHER_NOT_FOUND" }, 404);
   }
 

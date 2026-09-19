@@ -5,7 +5,7 @@ import {
   CATEGORY_TO_KEY,
   nameOfAgent,
 } from "../agents/addresses";
-import { env, hasChain } from "../env";
+import { deployment, env, hasChain } from "../env";
 import { indexVoucher } from "../store";
 import type { CategoryCode, VoucherDetail, VoucherMetadata } from "../types";
 import { VOUCHER_ABI } from "./abis";
@@ -161,6 +161,87 @@ const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 /** 与合约 `VoucherStatus` 枚举顺序一致 */
 const VOUCHER_STATUS_LABEL = ["Issued", "Redeemed", "Voided"] as const;
+
+/**
+ * 确保 tokenId 有链下明细：内存未命中时（后端重启、或凭证由上一个进程签发）
+ * 回源链上 getVoucher 重建明细并重新索引。
+ *
+ * 返回 null 表示链上也查不到（tokenId 不存在 / 未部署合约）。
+ */
+export async function ensureVoucher(tokenId: string): Promise<VoucherDetail | null> {
+  const { vouchers } = await import("../store");
+  const cached = vouchers.get(tokenId);
+  if (cached) {
+    console.log(`[voucher] #${tokenId} 命中内存索引`);
+    return cached;
+  }
+
+  if (!hasChain) {
+    console.warn(
+      `[voucher] #${tokenId} 内存未命中，但链上模式未启用（hasChain=false）→ ` +
+        `检查 deployments/fuji.json 是否存在且 deployed=true，以及 ORCHESTRATOR_KEY 是否已配置。` +
+        `deployment=${deployment ? "已加载" : "null"}`
+    );
+    return null;
+  }
+
+  const { voucher } = contractAddresses();
+  console.log(`[voucher] #${tokenId} 内存未命中，回源链上 ${voucher}.getVoucher ...`);
+
+  try {
+    const onChain = await publicClient.readContract({
+      address: voucher,
+      abi: VOUCHER_ABI,
+      functionName: "getVoucher",
+      args: [BigInt(tokenId)],
+    });
+    if (onChain.provider === ZERO_ADDRESS) {
+      console.warn(
+        `[voucher] #${tokenId} 链上 provider 为零地址 → 该 tokenId 在合约 ${voucher} 上不存在`
+      );
+      return null;
+    }
+
+    const category = Number(onChain.category) as CategoryCode;
+    const status = VOUCHER_STATUS_LABEL[Number(onChain.status)] ?? "Issued";
+    console.log(
+      `[voucher] #${tokenId} 链上读取成功：${status} / ${category} / ` +
+        `provider=${onChain.provider} / holder=${onChain.holder}`
+    );
+
+    const detail: VoucherDetail = {
+      tokenId,
+      orderId: onChain.orderId.toString(),
+      provider: onChain.provider,
+      providerName: nameOfAgent(onChain.provider),
+      holder: onChain.holder,
+      category,
+      code: onChain.code,
+      title: onChain.title,
+      metadataHash: onChain.metadataHash,
+      validFrom: Number(onChain.validFrom),
+      validTo: Number(onChain.validTo),
+      status,
+      // 链下 details 原文不在链上（只有 metadataHash），重建时标注来源
+      metadata: buildMetadata({
+        tokenId,
+        category,
+        title: onChain.title,
+        code: onChain.code,
+        details: { restored: "从链上状态重建" },
+      }),
+    };
+
+    indexVoucher(detail);
+    return detail;
+  } catch (error) {
+    console.error(
+      `[voucher] #${tokenId} 链上读取失败（RPC / 地址 / ABI 问题）:`,
+      error instanceof Error ? error.message : error
+    );
+    return null;
+  }
+}
 
 /**
  * 商户核销：只有发行该凭证的服务商 Agent 才能调用 redeem，且不可重复使用。
