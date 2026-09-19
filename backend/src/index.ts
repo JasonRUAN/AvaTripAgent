@@ -8,6 +8,10 @@ import { env, hasChain, hasLLM } from "./env";
 import { runPlan } from "./orchestrator/planner";
 import { getOrderChannel, getRunChannel, touch } from "./sse";
 import { orders, quotes, runs, listVouchersByHolder } from "./store";
+import {
+  generateTripSummary,
+  type TripSummaryVoucherInput,
+} from "./trip-summary";
 import type { Quote, SettlementEvent, StreamEvent, TripRequest } from "./types";
 
 const app = new Hono();
@@ -236,6 +240,57 @@ app.get("/api/vouchers/:tokenId/metadata", async (c) => {
   const voucher = await ensureVoucher(tokenId);
   if (!voucher?.metadata) return c.json({ error: "METADATA_NOT_FOUND" }, 404);
   return c.json(voucher.metadata);
+});
+
+// ---------------------------------------------------------------------- AI 行程总结
+
+/**
+ * 行程 AI 总结：前端把按订单聚合好的凭证明细（链下 metadata.details）发过来，
+ * 后端交给 LLM 生成总结 + 亮点 + 出行提示。结果按 tripId 缓存在进程内。
+ */
+app.post("/api/ai/trip-summary", async (c) => {
+  const body = (await c.req.json().catch(() => null)) as
+    | { tripId?: string; vouchers?: unknown }
+    | null;
+
+  if (!body?.tripId || !Array.isArray(body.vouchers)) {
+    return c.json({ error: "INVALID_REQUEST", message: "缺少 tripId 或 vouchers" }, 400);
+  }
+
+  const vouchers = (body.vouchers as unknown[])
+    .filter(
+      (item): item is TripSummaryVoucherInput =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof (item as TripSummaryVoucherInput).title === "string"
+    )
+    .map((item) => ({
+      title: item.title,
+      categoryLabel:
+        typeof item.categoryLabel === "string" ? item.categoryLabel : "其他",
+      details:
+        typeof item.details === "object" && item.details !== null
+          ? (item.details as Record<string, string>)
+          : {},
+    }));
+
+  if (vouchers.length === 0) {
+    return c.json({ error: "INVALID_REQUEST", message: "vouchers 为空" }, 400);
+  }
+
+  try {
+    const summary = await generateTripSummary(body.tripId, vouchers);
+    return c.json({ tripId: body.tripId, ...summary });
+  } catch (error) {
+    console.error("[trip-summary] 生成失败:", error);
+    return c.json(
+      {
+        error: "SUMMARY_FAILED",
+        message: error instanceof Error ? error.message : "行程总结生成失败",
+      },
+      500
+    );
+  }
 });
 
 // ---------------------------------------------------------------------- SSE 辅助
