@@ -10,7 +10,67 @@ const EXAMPLES = [
   "北京出发曼谷 6 天、两人、预算 6000、爱逛夜市",
 ];
 
+/** 与后端 mock/catalog.ts 的 ORIGIN_AIRPORTS 保持一致 */
+const ORIGINS = ["上海", "北京", "广州", "深圳", "香港"];
+
 const DESTINATIONS = ["东京", "新加坡", "曼谷"];
+
+const PREFERENCES = ["想吃好", "少走路", "亲子", "购物", "夜景", "博物馆", "夜市"];
+
+/** 偏好关键词 → 偏好标签（按顺序匹配 chips 列表） */
+const PREFERENCE_KEYWORDS: [RegExp, string][] = [
+  [/吃好|美食/, "想吃好"],
+  [/少走路|省力/, "少走路"],
+  [/亲子|带娃|孩子/, "亲子"],
+  [/购物|买买买/, "购物"],
+  [/夜景|夜生活/, "夜景"],
+  [/博物馆|美术馆|展览/, "博物馆"],
+  [/夜市/, "夜市"],
+];
+
+const CN_NUM: Record<string, number> = {
+  一: 1, 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
+};
+
+const clamp = (n: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, n));
+
+/**
+ * 轻量解析自然语言需求（如「北京出发曼谷 6 天、两人、预算 6000、爱逛夜市」），
+ * 只在对应字段能匹配到时才返回该字段，避免覆盖用户已填内容。
+ */
+export function parseTripText(text: string): Partial<TripRequest> {
+  const result: Partial<TripRequest> = {};
+
+  const route = text.match(/([\u4e00-\u9fa5]{2,4})(?:出发|飞|去)([\u4e00-\u9fa5]{2,5})/);
+  if (route) {
+    if (ORIGINS.includes(route[1]!)) result.origin = route[1];
+    result.destination = route[2]!;
+  }
+
+  const days = text.match(/(\d+)\s*天/);
+  if (days) result.days = clamp(Number(days[1]), 1, 14);
+
+  if (/一家三口|两大一小|三口/.test(text)) {
+    result.pax = 3;
+  } else {
+    const cnPax = text.match(/([\u4e00-\u9fa5])\s*人/);
+    const numPax = text.match(/(\d+)\s*人/);
+    if (numPax) result.pax = clamp(Number(numPax[1]), 1, 12);
+    else if (cnPax && CN_NUM[cnPax[1]!]) result.pax = CN_NUM[cnPax[1]!];
+  }
+
+  const budget = text.match(/预算\s*([\d,]+)/);
+  if (budget) result.budget = Number(budget[1]!.replace(/,/g, "")) || result.budget;
+
+  const prefs = PREFERENCE_KEYWORDS
+    .filter(([re]) => re.test(text))
+    .map(([, pref]) => pref);
+  // 完整需求句（含出发地/目的地）出现时整体重置偏好，避免残留上一条的偏好
+  if (prefs.length || route) result.preferences = prefs;
+
+  return result;
+}
 
 function Field({
   label,
@@ -42,6 +102,10 @@ export function TripRequestForm({
   const patch = (next: Partial<TripRequest>) =>
     setRequest((prev) => ({ ...prev, ...next }));
 
+  /** 上方文本（输入/示例）变化时，同步解析出下方参数 */
+  const applyText = (text: string) =>
+    setRequest((prev) => ({ ...prev, ...parseTripText(text), rawText: text }));
+
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-2">
@@ -53,7 +117,7 @@ export function TripRequestForm({
 
       <textarea
         value={request.rawText}
-        onChange={(event) => patch({ rawText: event.target.value })}
+        onChange={(event) => applyText(event.target.value)}
         rows={4}
         placeholder="例如：上海去东京 5 天、两人、预算 8000、想吃好少走路"
         className="w-full resize-none rounded-2xl border border-brand-100 bg-white px-4 py-3 text-sm leading-6 text-ink-900 outline-none transition-all placeholder:text-ink-100 focus:border-brand-400 focus:shadow-glow"
@@ -64,7 +128,7 @@ export function TripRequestForm({
           <button
             key={example}
             type="button"
-            onClick={() => patch({ rawText: example })}
+            onClick={() => applyText(example)}
             className="cursor-pointer rounded-full border border-brand-100 bg-white px-3 py-1.5 text-[11px] font-semibold text-ink-500 transition-all hover:-translate-y-0.5 hover:border-brand-300 hover:text-brand-700 hover:shadow-soft"
           >
             {example}
@@ -79,11 +143,20 @@ export function TripRequestForm({
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="出发地">
-            <input
+            <select
               className={inputClass}
               value={request.origin}
               onChange={(event) => patch({ origin: event.target.value })}
-            />
+            >
+              {ORIGINS.map((city) => (
+                <option key={city} value={city}>
+                  {city}
+                </option>
+              ))}
+              {!ORIGINS.includes(request.origin) ? (
+                <option value={request.origin}>{request.origin}</option>
+              ) : null}
+            </select>
           </Field>
 
           <Field label="目的地">
@@ -149,7 +222,7 @@ export function TripRequestForm({
         <div className="mt-3">
           <p className="mb-2 text-xs font-bold tracking-wide text-ink-300">偏好</p>
           <div className="flex flex-wrap gap-2">
-            {["想吃好", "少走路", "亲子", "购物", "夜景", "博物馆"].map((pref) => {
+            {PREFERENCES.map((pref) => {
               const active = request.preferences.includes(pref);
               return (
                 <button
