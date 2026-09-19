@@ -6,6 +6,7 @@ import {MockUSDC} from "../src/MockUSDC.sol";
 import {AgentRegistry} from "../src/AgentRegistry.sol";
 import {TripSettlement} from "../src/TripSettlement.sol";
 import {TravelVoucher} from "../src/TravelVoucher.sol";
+import {EtherAmount} from "./EtherAmount.sol";
 
 /// @title Deploy
 /// @notice 部署 4 个合约 + 注册 4 个服务商 Agent，并把地址快照写入 deployments/fuji.json
@@ -22,8 +23,6 @@ import {TravelVoucher} from "../src/TravelVoucher.sol";
 ///
 /// `FUND_AGENT_AVAX`（单位 ether，可选）> 0 时，会给 5 个 Agent 地址各转一笔 AVAX 作为 gas。
 contract Deploy is Script {
-    uint256 internal constant FUND_AMOUNT = 0.15 ether;
-
     function run() external {
         address orchestrator = vm.envAddress("ORCHESTRATOR_ADDRESS");
         address flightAgent = vm.envAddress("FLIGHT_AGENT_ADDRESS");
@@ -31,9 +30,12 @@ contract Deploy is Script {
         address attractionAgent = vm.envAddress("ATTRACTION_AGENT_ADDRESS");
         address diningAgent = vm.envAddress("DINING_AGENT_ADDRESS");
         string memory baseURI = vm.envOr("VOUCHER_BASE_URI", string(""));
-        uint256 fundEther = vm.envOr("FUND_AGENT_AVAX", uint256(0));
+        // 注意：不能用 vm.envOr(name, uint256) 读小数，0.15 会被截断成 0
+        uint256 fundWei = EtherAmount.toWei(vm.envOr("FUND_AGENT_AVAX", string("0")));
 
-        vm.startBroadcast();
+        // 必须显式指定私钥：否则 forge 会用默认测试地址 0x1804c8AB... 当发送者，
+        // 导致链上模拟以 lack of funds 失败、交易一笔都发不出去
+        vm.startBroadcast(vm.envUint("PRIVATE_KEY"));
 
         MockUSDC usdc = new MockUSDC();
         AgentRegistry registry = new AgentRegistry();
@@ -59,12 +61,12 @@ contract Deploy is Script {
         }
 
         // 5 个 Agent 地址各需要少量 AVAX 才能发交易（settle / issueVoucher / redeem）
-        if (fundEther > 0) {
-            _fund(orchestrator, fundEther * 1e18);
-            _fund(flightAgent, fundEther * 1e18);
-            _fund(hotelAgent, fundEther * 1e18);
-            _fund(attractionAgent, fundEther * 1e18);
-            _fund(diningAgent, fundEther * 1e18);
+        if (fundWei > 0) {
+            _fund(orchestrator, fundWei);
+            _fund(flightAgent, fundWei);
+            _fund(hotelAgent, fundWei);
+            _fund(attractionAgent, fundWei);
+            _fund(diningAgent, fundWei);
         }
 
         vm.stopBroadcast();

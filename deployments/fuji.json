@@ -1,4 +1,5 @@
 {
+  "agentRegistry": "0xeb2edC5790ae18e3cc02A41c37150f12cfedC471",
   "agents": {
     "attraction": "0x2102A75052eF18e69a6f36C28C8E56C276eae048",
     "dining": "0xb04B224AcF8a2C27E1B112cA5E9ED9f05e876f7b",
@@ -8,8 +9,7 @@
   "chainId": 43113,
   "deployed": true,
   "orchestrator": "0xCace75F466b1334FbDdF4d75CA0702f9c398d551",
-  "travelVoucher": "0x34A1D3fff3958843C43aD80F30b94c510645C316",
-  "tripSettlement": "0x90193C961A926261B756D1E5bb255e67ff9498A1",
-  "agentRegistry": "0x7FA9385bE102ac3EAc297483Dd6233D62b3e1496",
-  "usdc": "0x5b73C5498c1E3b4dbA84de0F1833c4a029d90519"
+  "travelVoucher": "0x2d4842Cfc6387e4c3C38A54479b9657833B66F00",
+  "tripSettlement": "0x25C596F436fDc3019d18c34ffE04B7fd8CE599E9",
+  "usdc": "0x8002BB738cC2F14aA0CbC632f8AcC727104492Ca"
 }
