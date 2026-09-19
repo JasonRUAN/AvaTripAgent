@@ -29,6 +29,46 @@ export interface SettleParams {
   traveler: `0x${string}`;
 }
 
+/** OrderStatus.Funded —— 只有处于托管中的订单才允许分账 */
+const ORDER_STATUS_FUNDED = 1;
+
+/**
+ * 校验订单是否真的托管在链上，且明细条数与报价单一致。
+ *
+ * 前端在「合约未部署」的兜底模式下会生成一个本地随机订单号，
+ * 直接拿它去 settle 只会 revert UnknownOrder，导致后面「收款 → 发券」整条链路一笔都发不出来。
+ * 这里先读链确认，读不到就降级为模拟分账，凭证照常签发。
+ */
+async function orderIsOnChain(orderId: string, expectedItems: number): Promise<boolean> {
+  try {
+    const { settlement } = contractAddresses();
+
+    const order = await publicClient.readContract({
+      address: settlement,
+      abi: SETTLEMENT_ABI,
+      functionName: "getOrder",
+      args: [BigInt(orderId)],
+    });
+
+    const traveler = order[0];
+    const status = order[5];
+    if (traveler === "0x0000000000000000000000000000000000000000") return false;
+    if (Number(status) !== ORDER_STATUS_FUNDED) return false;
+
+    const items = await publicClient.readContract({
+      address: settlement,
+      abi: SETTLEMENT_ABI,
+      functionName: "getItems",
+      args: [BigInt(orderId)],
+    });
+
+    return items.length === expectedItems;
+  } catch (error) {
+    console.warn(`[settlement] 链上订单校验失败（订单 ${orderId}）:`, error);
+    return false;
+  }
+}
+
 export async function settleOrder(params: SettleParams): Promise<void> {
   const { orderId, runId, quote } = params;
   const channel = getOrderChannel(orderId);
@@ -54,6 +94,17 @@ export async function settleOrder(params: SettleParams): Promise<void> {
 
   emit({ type: "settlement.start", orderId, total: quote.total });
 
+  // 链上确实存在这笔托管订单才走真实 settle，否则退化为模拟（例如前端兜底模式生成的本地订单号）
+  const settleOnChain = hasChain
+    ? await orderIsOnChain(orderId, quote.lineItems.length)
+    : false;
+
+  if (hasChain && !settleOnChain) {
+    console.warn(
+      `[settlement] 订单 ${orderId} 不在链上或状态不是 Funded，本次分账退化为模拟，凭证仍会签发`
+    );
+  }
+
   const tokenIds: string[] = [];
 
   for (const [index, lineItem] of quote.lineItems.entries()) {
@@ -70,7 +121,7 @@ export async function settleOrder(params: SettleParams): Promise<void> {
 
     try {
       // ① 结算合约把钱打给服务商 Agent
-      if (hasChain) {
+      if (settleOnChain) {
         const { settlement } = contractAddresses();
         const hash = await orchestratorWallet().writeContract({
           address: settlement,

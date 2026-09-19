@@ -57,6 +57,7 @@ export const SETTLEMENT_ABI = parseAbi([
   "function getItems(uint256 orderId) view returns ((address provider, uint256 amount, uint8 category, bytes32 itemHash)[])",
   "function itemCount(uint256 orderId) view returns (uint256)",
   "function cancel(uint256 orderId)",
+  "event OrderCreated(uint256 indexed orderId, address indexed traveler, uint256 total, bytes32 itineraryHash)",
 ]);
 
 export const VOUCHER_ABI = parseAbi([

@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { keccak256, toHex } from "viem";
-import { useAccount, usePublicClient, useWriteContract } from "wagmi";
+import { formatUnits, keccak256, toHex } from "viem";
+import { useAccount, usePublicClient, useReadContract, useWriteContract } from "wagmi";
 import { consumeSSE } from "@/lib/sse-client";
 import { BACKEND_URL, CONTRACTS, SETTLEMENT_ABI, USDC_ABI, isDeployed } from "@/lib/contracts";
 import type { Quote, SettlementEvent, SettlementStep } from "@/lib/types";
@@ -20,16 +20,31 @@ function numericTripId(tripId: string): bigint {
   return BigInt(keccak256(toHex(tripId))) % 1_000_000n;
 }
 
-/** 从 createOrder 回执里取出 orderId（OrderCreated 的第一个 indexed 参数） */
-function orderIdFromReceipt(receipt: { logs: readonly { topics: readonly string[] }[] }): string | null {
+/** OrderCreated(uint256 indexed orderId, address indexed traveler, uint256 total, bytes32 itineraryHash) 的 topic0 */
+const ORDER_CREATED_TOPIC = keccak256(
+  toHex("OrderCreated(uint256,address,uint256,bytes32)")
+);
+
+/**
+ * 从 createOrder 回执里取出 orderId（OrderCreated 的第一个 indexed 参数）。
+ *
+ * 必须同时按「结算合约地址 + OrderCreated 的 topic0」过滤：
+ * createOrder 内部先执行 usdc.transferFrom，回执里 USDC 的 Transfer 事件
+ * 排在 OrderCreated 之前，无脑取任意日志的 topics[1] 会拿到用户地址而非订单号。
+ */
+function orderIdFromReceipt(receipt: {
+  logs: readonly { address: string; topics: readonly string[] }[];
+}): string | null {
   for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== CONTRACTS.tripSettlement.toLowerCase()) continue;
+    if (log.topics[0]?.toLowerCase() !== ORDER_CREATED_TOPIC) continue;
+
     const orderId = log.topics[1];
-    if (orderId) {
-      try {
-        return BigInt(orderId).toString();
-      } catch {
-        continue;
-      }
+    if (!orderId) continue;
+    try {
+      return BigInt(orderId).toString();
+    } catch {
+      continue;
     }
   }
   return null;
@@ -41,7 +56,8 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
 
-  const [stage, setStage] = useState<CheckoutStage>("connect");
+  /** 支付之后的阶段；支付前的步骤（连接 / 领币 / 授权 / 支付）由链上状态实时推导 */
+  const [phase, setPhase] = useState<"idle" | "settling" | "done">("idle");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [orderId, setOrderId] = useState<string | null>(null);
@@ -50,6 +66,60 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
   const [tokenIds, setTokenIds] = useState<string[]>([]);
 
   const total = useMemo(() => BigInt(quote?.total ?? "0"), [quote]);
+
+  /**
+   * 链上余额 / 授权额度直接挂在 react-query 上：
+   * 打开页面自动读一次，每笔交易后再 refetch，步骤条就是靠它推导的。
+   */
+  const { data: balance, refetch: refetchBalance } = useReadContract({
+    address: CONTRACTS.usdc,
+    abi: USDC_ABI,
+    functionName: "balanceOf",
+    args: address ? [address] : undefined,
+    query: { enabled: isDeployed && Boolean(address) },
+  });
+
+  const { data: allowance, refetch: refetchAllowance } = useReadContract({
+    address: CONTRACTS.usdc,
+    abi: USDC_ABI,
+    functionName: "allowance",
+    args: address ? [address, CONTRACTS.tripSettlement] : undefined,
+    query: { enabled: isDeployed && Boolean(address) },
+  });
+
+  const readBalance = useCallback(
+    async () => (await refetchBalance()).data ?? 0n,
+    [refetchBalance]
+  );
+
+  const readAllowance = useCallback(
+    async () => (await refetchAllowance()).data ?? 0n,
+    [refetchAllowance]
+  );
+
+  /** 交易上链后重读余额 / 授权 */
+  const refreshFunds = useCallback(async () => {
+    if (!isDeployed || !address) return;
+    await Promise.all([refetchBalance(), refetchAllowance()]);
+  }, [address, refetchAllowance, refetchBalance]);
+
+  /**
+   * 当前步骤：连接钱包 → 领 tUSDC → 授权 → 支付。
+   *
+   * 完全由链上真实状态推导（是否连接 / 余额够不够 / 额度够不够），
+   * 所以不管用户是点步骤里的按钮，还是直接点「确认支付」让 pay() 内部
+   * 自动补领、补授权，左侧步骤条都会同步前进。
+   */
+  const stage: CheckoutStage = useMemo(() => {
+    if (phase === "settling") return "settling";
+    if (phase === "done") return "done";
+    if (!isConnected || !address) return "connect";
+    if (!isDeployed) return "faucet";
+    // 链上状态还没读到时先停在「领 tUSDC」，下一步就是校验余额
+    if (balance === undefined || balance < total) return "faucet";
+    if (allowance === undefined || allowance < total) return "approve";
+    return "pay";
+  }, [address, allowance, balance, isConnected, phase, total]);
 
   const faucet = useCallback(async () => {
     if (!isDeployed) return;
@@ -62,13 +132,13 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
         functionName: "faucet",
       });
       await publicClient?.waitForTransactionReceipt({ hash });
-      setStage("approve");
+      await refreshFunds();
     } catch (err) {
       setError(err instanceof Error ? err.message : "领取失败");
     } finally {
       setBusy(null);
     }
-  }, [publicClient, writeContractAsync]);
+  }, [publicClient, refreshFunds, writeContractAsync]);
 
   const approve = useCallback(async () => {
     if (!isDeployed) return;
@@ -82,13 +152,13 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
         args: [CONTRACTS.tripSettlement, total],
       });
       await publicClient?.waitForTransactionReceipt({ hash });
-      setStage("pay");
+      await refreshFunds();
     } catch (err) {
       setError(err instanceof Error ? err.message : "授权失败");
     } finally {
       setBusy(null);
     }
-  }, [publicClient, total, writeContractAsync]);
+  }, [publicClient, refreshFunds, total, writeContractAsync]);
 
   /** 未部署合约时走模拟：直接登记订单，后端会用模拟分账 + 模拟发券 */
   const registerOrder = useCallback(
@@ -109,7 +179,7 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
   );
 
   const watchSettlement = useCallback(async (orderIdValue: string) => {
-    setStage("settling");
+    setPhase("settling");
 
     await consumeSSE<SettlementEvent>(
       `${BACKEND_URL}/api/orders/${orderIdValue}/stream`,
@@ -124,7 +194,7 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
           }
           if (event.type === "settlement.done") {
             setTokenIds(event.tokenIds);
-            setStage("done");
+            setPhase("done");
           }
           if (event.type === "settlement.error") {
             setError(event.message);
@@ -147,8 +217,55 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
       return;
     }
 
-    setBusy("pay");
+    if (!address) {
+      setError("钱包未连接");
+      return;
+    }
+
+    setBusy("prepare");
     try {
+      // createOrder 内部会 usdc.transferFrom，余额不足会被 tUSDC 以
+      // InsufficientBalance(0xf4d678b8) revert。水龙头可重复领取，
+      // 余额不够时自动补领（每单上限 5 次，防止死循环烧 gas）。
+      // 每一步都同步 busy，左侧步骤条就能跟着钱包操作一步步走。
+      let balance = await readBalance();
+      let faucetCount = 0;
+
+      while (balance < total && faucetCount < 5) {
+        setBusy("faucet");
+        const faucetHash = await writeContractAsync({
+          address: CONTRACTS.usdc,
+          abi: USDC_ABI,
+          functionName: "faucet",
+        });
+        await publicClient?.waitForTransactionReceipt({ hash: faucetHash });
+        balance = await readBalance();
+        faucetCount += 1;
+      }
+
+      if (balance < total) {
+        throw new Error(
+          `tUSDC 余额不足：当前 ${formatUnits(balance, 6)}，本单需要 ${formatUnits(total, 6)}`
+        );
+      }
+
+      // 授权不足会被 tUSDC 以 InsufficientAllowance(0x13be252b) revert，
+      // 所以支付前先确保额度够
+      let allowance = await readAllowance();
+
+      if (allowance < total) {
+        setBusy("approve");
+        const approveHash = await writeContractAsync({
+          address: CONTRACTS.usdc,
+          abi: USDC_ABI,
+          functionName: "approve",
+          args: [CONTRACTS.tripSettlement, total],
+        });
+        await publicClient?.waitForTransactionReceipt({ hash: approveHash });
+        allowance = await readAllowance();
+      }
+
+      setBusy("pay");
       const hash = await writeContractAsync({
         address: CONTRACTS.tripSettlement,
         abi: SETTLEMENT_ABI,
@@ -166,28 +283,47 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
       });
 
       const receipt = await publicClient?.waitForTransactionReceipt({ hash });
-      const parsed = receipt ? orderIdFromReceipt(receipt) : null;
-      const finalOrderId = parsed ?? String(Date.now() % 100000);
-
       setPayTxHash(hash);
+
+      // 解析不出订单号时不能造一个假的发给后端：后端拿到不存在的 orderId
+      // 会让 settle 直接 revert UnknownOrder，整条发券链路全废。
+      const finalOrderId = receipt ? orderIdFromReceipt(receipt) : null;
+      if (!finalOrderId) {
+        throw new Error("没能从交易回执里解析出订单号（缺少 OrderCreated 事件）");
+      }
+
       setOrderId(finalOrderId);
       setBusy(null);
+      await refreshFunds();
 
       await registerOrder(finalOrderId, hash);
       await watchSettlement(finalOrderId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "支付失败");
       setBusy(null);
+      await refreshFunds();
     }
-  }, [isConnected, params.runId, publicClient, quote, registerOrder, watchSettlement, writeContractAsync]);
+  }, [
+    address,
+    isConnected,
+    publicClient,
+    quote,
+    readAllowance,
+    readBalance,
+    refreshFunds,
+    registerOrder,
+    total,
+    watchSettlement,
+    writeContractAsync,
+  ]);
 
   /** 根据当前状态决定下一步该做什么 */
   const nextAction = useMemo(() => {
-    if (stage === "settling" || stage === "done") return null;
+    if (phase === "settling" || phase === "done") return null;
     if (!isDeployed) return { label: "演示模式：模拟支付并分账", run: pay };
     if (!isConnected) return { label: "连接钱包", run: () => {} };
     return { label: "确认支付（approve + createOrder）", run: pay };
-  }, [isConnected, pay, stage]);
+  }, [isConnected, pay, phase]);
 
   return {
     stage,

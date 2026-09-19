@@ -81,6 +81,14 @@ export const SETTLEMENT_ABI = [
       { name: "total", type: "uint256", indexed: false },
     ],
   },
+  // 自定义错误必须写进 ABI，否则 viem 只能报「未知签名 0x...」，无法定位原因
+  { type: "error", name: "NotOperator", inputs: [] },
+  { type: "error", name: "InactiveProvider", inputs: [{ name: "provider", type: "address" }] },
+  { type: "error", name: "UnknownOrder", inputs: [{ name: "orderId", type: "uint256" }] },
+  { type: "error", name: "OrderNotFunded", inputs: [{ name: "orderId", type: "uint256" }] },
+  { type: "error", name: "ItemAlreadySettled", inputs: [{ name: "itemIndex", type: "uint256" }] },
+  { type: "error", name: "ItemOutOfRange", inputs: [{ name: "itemIndex", type: "uint256" }] },
+  { type: "error", name: "TransferFailed", inputs: [] },
 ] as const;
 
 export const VOUCHER_ABI = [

@@ -1,3 +1,4 @@
+import { CONTRACTS, isDeployed } from "./contracts";
 import { addDays } from "./format";
 import { toUnits } from "./format";
 import type {
@@ -21,12 +22,30 @@ import type {
  * 保证「一句话 → 流式行程 → 报价单 → 支付 → 凭证」的完整故事能讲完。
  */
 
-/** 演示用的服务商 Agent 地址（非真实链上地址，仅用于展示） */
+/**
+ * 演示用的服务商 Agent 地址。
+ *
+ * ⚠️ 合约已部署（`isDeployed`）时必须用链上真实注册的 Agent 地址：
+ *    TripSettlement.createOrder 会逐个校验 `registry.isActiveAgent(provider)`，
+ *    用假地址会直接 revert InactiveProvider；假地址还可能是非法长度，
+ *    连 viem 的地址校验都过不去。
+ * 未部署时才退回下面这组纯展示用的假地址。
+ */
+const MOCK_AGENTS = {
+  flight: "0x1a4f0e8c6b3d5a7f9e2c4b6d8a0f1e3c5b7d9a2f",
+  hotel: "0x2b5e1f9d7c4e6b8a0f3d5c7e9b1a3f5d7c9e0b2a",
+  // 注意保持 40 位十六进制，多一位少一位都会被 viem 判为非法地址
+  attraction: "0x3c6f2a0e8d5f7c9b1a4e6d8f0b2c4e6a8d0f1b3c",
+  dining: "0x4d7a3b1f9e6a8c0d2b5f7e9a1c3d5f7b9e1a2c4e",
+} as const;
+
 export const DEMO_AGENTS = {
-  flight: "0x1a4f0e8c6b3d5a7f9e2c4b6d8a0f1e3c5b7d9a2f" as const,
-  hotel: "0x2b5e1f9d7c4e6b8a0f3d5c7e9b1a3f5d7c9e0b2a" as const,
-  attraction: "0x3c6f2a0e8d5f7c9b1a4e6d8f0b2c4e6a8d0f1b3" as const,
-  dining: "0x4d7a3b1f9e6a8c0d2b5f7e9a1c3d5f7b9e1a2c4e" as const,
+  flight: (isDeployed ? CONTRACTS.agents.flight : MOCK_AGENTS.flight) as Address,
+  hotel: (isDeployed ? CONTRACTS.agents.hotel : MOCK_AGENTS.hotel) as Address,
+  attraction: (isDeployed
+    ? CONTRACTS.agents.attraction
+    : MOCK_AGENTS.attraction) as Address,
+  dining: (isDeployed ? CONTRACTS.agents.dining : MOCK_AGENTS.dining) as Address,
 };
 
 export const DEMO_AGENT_NAMES: Record<string, string> = {

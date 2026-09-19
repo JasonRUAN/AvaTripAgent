@@ -8,7 +8,8 @@ contract MockUSDC {
     string public constant name = "Travel Demo USD";
     string public constant symbol = "tUSDC";
     uint8 public constant decimals = 6;
-    uint256 public constant FAUCET_AMOUNT = 10_000 * 10 ** decimals;
+    /// 单次水龙头额度：1,000,000 tUSDC，保证一单（通常 1~2 万）领一次就够付
+    uint256 public constant FAUCET_AMOUNT = 1_000_000 * 10 ** decimals;
 
     uint256 public totalSupply;
 

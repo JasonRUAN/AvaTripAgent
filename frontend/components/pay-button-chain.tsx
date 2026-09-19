@@ -7,7 +7,7 @@ import type { CheckoutStage } from "@/hooks/use-checkout";
 
 const CHAIN: { key: CheckoutStage; label: string; hint: string }[] = [
   { key: "connect", label: "连接钱包", hint: "Core / MetaMask，切到 Avalanche Fuji" },
-  { key: "faucet", label: "领取 tUSDC", hint: "每次 10,000 测试币，可重复领" },
+  { key: "faucet", label: "领取 tUSDC", hint: "每次 1,000,000 测试币，可重复领" },
   { key: "approve", label: "授权结算合约", hint: "批准 TripSettlement 划转本次总额" },
   { key: "pay", label: "确认支付", hint: "资金进入链上托管，状态 Funded" },
 ];
@@ -61,6 +61,13 @@ export function PayButtonChain({
   const stageIndex = ["connect", "faucet", "approve", "pay"].indexOf(stage);
   const settled = stage === "settling" || stage === "done";
 
+  const payLabel =
+    stage === "faucet"
+      ? "领取测试币并完成支付"
+      : stage === "approve"
+        ? "授权并支付（2 次签名）"
+        : "确认支付（1 次签名）";
+
   return (
     <div className="flex flex-col gap-2.5">
       {!isConnected ? (
@@ -71,8 +78,10 @@ export function PayButtonChain({
       ) : null}
 
       {CHAIN.map((item, index) => {
-        const active = isConnected && stageIndex === index;
-        const done = settled || (isConnected && stageIndex > index);
+        // 是否高亮当前步骤完全由 stage 决定（stage 由链上余额 / 授权推导），
+        // 这样点「确认支付」时内部自动补领、补授权，步骤条也会同步前进
+        const active = stageIndex === index;
+        const done = settled || stageIndex > index;
 
         return (
           <div
@@ -135,13 +144,19 @@ export function PayButtonChain({
       >
         {busy === "pay"
           ? "等待钱包签名…"
-          : settled
-            ? "已完成"
-            : "确认支付（1 次签名）"}
+          : busy === "faucet"
+            ? "领取测试币中…"
+            : busy === "approve"
+              ? "授权中…"
+              : busy === "prepare"
+                ? "检查链上状态…"
+                : settled
+                  ? "已完成"
+                  : payLabel}
       </button>
 
       <p className="text-[11px] leading-4 text-ink-300">
-        用户全程只需签 2 次（授权 + 支付）。后续分账与发券由后端 Agent 私钥承担 gas。
+        全程最多签 3 次（领测试币 / 授权 / 支付）。后续分账与发券由后端 Agent 私钥承担 gas。
       </p>
 
       {error ? (
