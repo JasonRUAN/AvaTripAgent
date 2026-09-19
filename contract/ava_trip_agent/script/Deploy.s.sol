@@ -121,6 +121,13 @@ contract Deploy is Script {
         string memory agentsJson = vm.serializeAddress(agents, "dining", diningAgent);
 
         string memory finalJson = vm.serializeString(json, "agents", agentsJson);
-        vm.writeJson(finalJson, "../../deployments/fuji.json");
+
+        // 默认写仓库根的 deployments/fuji.json；可用 DEPLOYMENT_OUT 覆盖做本地验证
+        string memory outPath = vm.envOr(
+            "DEPLOYMENT_OUT",
+            string("../../deployments/fuji.json")
+        );
+        vm.writeJson(finalJson, outPath);
+        console2.log("Deployment json", outPath);
     }
 }

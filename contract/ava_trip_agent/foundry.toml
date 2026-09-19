@@ -11,6 +11,12 @@ remappings = [
     "forge-std/=lib/forge-std/src/",
 ]
 
+# vm.writeJson 默认只允许写项目根目录，部署产物要写到仓库根的 deployments/
+# 路径相对于 foundry.toml 所在目录（即本项目根目录）
+fs_permissions = [
+    { access = "read-write", path = "../../deployments" },
+]
+
 [rpc_endpoints]
 fuji = "https://api.avax-test.network/ext/bc/C/rpc"
 
