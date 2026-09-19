@@ -8,8 +8,8 @@ import { usePlanRun } from "@/hooks/use-plan-run";
 import type { TripRequest } from "@/lib/types";
 
 export default function WorkbenchPage() {
-  const { state, start, reset } = usePlanRun();
-  const [request, setRequest] = useState<TripRequest | null>(null);
+  const { state, lastRequest, start, reset } = usePlanRun();
+  const [request, setRequest] = useState<TripRequest | null>(lastRequest);
 
   const handleSubmit = (next: TripRequest) => {
     setRequest(next);
@@ -48,6 +48,7 @@ export default function WorkbenchPage() {
             <TripRequestForm
               onSubmit={handleSubmit}
               running={state.status === "running"}
+              initialRequest={lastRequest ?? undefined}
             />
           </div>
         </aside>

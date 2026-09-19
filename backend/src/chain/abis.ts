@@ -117,6 +117,20 @@ export const VOUCHER_ABI = [
   },
   {
     type: "function",
+    name: "nextTokenId",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "void",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "isValid",
     stateMutability: "view",
     inputs: [{ name: "tokenId", type: "uint256" }],
@@ -158,6 +172,29 @@ export const VOUCHER_ABI = [
       { name: "code", type: "string", indexed: false },
     ],
   },
+  {
+    type: "event",
+    name: "VoucherRedeemed",
+    inputs: [
+      { name: "tokenId", type: "uint256", indexed: true },
+      { name: "provider", type: "address", indexed: true },
+    ],
+  },
+  // 自定义错误必须写进 ABI，否则 viem 只能报「未知签名 0x...」，无法定位原因
+  { type: "error", name: "NotOwner", inputs: [] },
+  {
+    type: "error",
+    name: "NotRegisteredAgent",
+    inputs: [{ name: "caller", type: "address" }],
+  },
+  { type: "error", name: "NotProvider", inputs: [{ name: "tokenId", type: "uint256" }] },
+  { type: "error", name: "UnknownVoucher", inputs: [{ name: "tokenId", type: "uint256" }] },
+  {
+    type: "error",
+    name: "VoucherNotIssued",
+    inputs: [{ name: "tokenId", type: "uint256" }],
+  },
+  { type: "error", name: "InvalidValidityWindow", inputs: [] },
 ] as const;
 
 export const REGISTRY_ABI = [

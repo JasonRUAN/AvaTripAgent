@@ -93,11 +93,14 @@ const inputClass =
 export function TripRequestForm({
   onSubmit,
   running,
+  initialRequest,
 }: {
   onSubmit: (request: TripRequest) => void;
   running: boolean;
+  /** 切换分类页回来时恢复上一次填写/提交的需求 */
+  initialRequest?: TripRequest;
 }) {
-  const [request, setRequest] = useState<TripRequest>(DEFAULT_TRIP_REQUEST);
+  const [request, setRequest] = useState<TripRequest>(initialRequest ?? DEFAULT_TRIP_REQUEST);
 
   const patch = (next: Partial<TripRequest>) =>
     setRequest((prev) => ({ ...prev, ...next }));

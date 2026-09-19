@@ -56,10 +56,18 @@ export default function MerchantPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider }),
       });
-      const payload = (await response.json()) as { error?: string; txHash?: string };
+      const payload = (await response.json()) as {
+        error?: string;
+        message?: string;
+        txHash?: string;
+      };
 
       if (!response.ok) {
-        setMessage(payload.error === "VOUCHER_NOT_FOUND" ? "凭证不存在" : "核销失败");
+        setMessage(
+          payload.error === "VOUCHER_NOT_FOUND"
+            ? "凭证不存在"
+            : (payload.message ?? "核销失败")
+        );
         return;
       }
 

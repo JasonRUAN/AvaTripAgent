@@ -6,7 +6,7 @@ import { WalletButton } from "@/components/wallet-button";
 import { useVouchers } from "@/hooks/use-vouchers";
 
 export default function VouchersPage() {
-  const { address, grouped, stats, loading, offline } = useVouchers();
+  const { address, grouped, stats, loading, offline, demo } = useVouchers();
 
   if (!address) {
     return (
@@ -35,7 +35,11 @@ export default function VouchersPage() {
             每张凭证都是 Avalanche Fuji 上的 ERC-721，二维码可直接给商户扫码核销
           </p>
         </div>
-        {offline ? <DemoBadge tone="warn" label="演示凭证 · 后端未连接" /> : null}
+        {offline ? (
+          <DemoBadge tone="warn" label="演示凭证 · 后端未连接" />
+        ) : demo ? (
+          <DemoBadge tone="soft" label="演示凭证 · 后端暂无记录（重启后明细不保留）" />
+        ) : null}
       </div>
 
       <div className="mb-5 grid grid-cols-3 gap-3">

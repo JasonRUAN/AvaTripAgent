@@ -1,5 +1,10 @@
-import { keccak256, toHex } from "viem";
-import { AGENT_ADDRESSES, AGENT_NAMES, CATEGORY_TO_KEY } from "../agents/addresses";
+import { decodeEventLog, keccak256, toHex } from "viem";
+import {
+  AGENT_ADDRESSES,
+  AGENT_NAMES,
+  CATEGORY_TO_KEY,
+  nameOfAgent,
+} from "../agents/addresses";
 import { env, hasChain } from "../env";
 import { indexVoucher } from "../store";
 import type { CategoryCode, VoucherDetail, VoucherMetadata } from "../types";
@@ -61,6 +66,13 @@ export async function issueVoucher(
     const wallet = agentWallet(key);
     const { voucher } = contractAddresses();
 
+    // 发券前先记下即将被分配的 tokenId，事件解析失败时用它兜底（合约 nextTokenId 从 1 开始）
+    const expectedTokenId = await publicClient.readContract({
+      address: voucher,
+      abi: VOUCHER_ABI,
+      functionName: "nextTokenId",
+    });
+
     const hash = await wallet.writeContract({
       address: voucher,
       abi: VOUCHER_ABI,
@@ -91,7 +103,9 @@ export async function issueVoucher(
       })
       .find((entry) => entry?.decoded)?.decoded;
 
-    tokenId = issued?.tokenId?.toString() ?? String(simulatedTokenId++);
+    // 拿不到事件时才用链上计数兜底；绝不能退回到进程内自增，
+    // 否则会记出一个链上并不存在的 tokenId（例如 0 或重复的小号），核销必然 UnknownVoucher。
+    tokenId = (issued?.tokenId ?? expectedTokenId).toString();
   } else {
     tokenId = String(simulatedTokenId++);
   }
@@ -127,17 +141,33 @@ export async function issueVoucher(
 function decodeIssued(log: { topics: readonly `0x${string}`[] | readonly string[]; data: `0x${string}` }):
   | { tokenId: bigint }
   | null {
-  // VoucherIssued(tokenId indexed, provider indexed, holder indexed, category, code)
-  if (!log.topics[1]) return null;
+  // 发券交易里 _safeMint 会先 emit ERC-721 Transfer（from = 0x0），
+  // 不能简单拿 topics[1] 当 tokenId，必须按事件签名只认 VoucherIssued。
   try {
-    return { tokenId: BigInt(log.topics[1] as string) };
+    const decoded = decodeEventLog({
+      abi: VOUCHER_ABI,
+      data: log.data,
+      topics: log.topics as [`0x${string}`, ...`0x${string}`[]],
+    });
+    if (decoded.eventName !== "VoucherIssued") return null;
+    const tokenId = decoded.args.tokenId;
+    return typeof tokenId === "bigint" ? { tokenId } : null;
   } catch {
     return null;
   }
 }
 
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+/** 与合约 `VoucherStatus` 枚举顺序一致 */
+const VOUCHER_STATUS_LABEL = ["Issued", "Redeemed", "Voided"] as const;
+
 /**
  * 商户核销：只有发行该凭证的服务商 Agent 才能调用 redeem，且不可重复使用。
+ *
+ * 写交易前先读一次链上状态：合约里的 require 条件都在链下先过一遍，
+ * 这样失败时能给出「凭证不存在 / 已核销 / 身份不对」这类可读原因，
+ * 而不是只能看到一个无法解码的 revert 签名。
  */
 export async function redeemVoucher(
   tokenId: string,
@@ -149,11 +179,40 @@ export async function redeemVoucher(
   if (hasChain) {
     const wallet = agentWallet(which);
     const { voucher } = contractAddresses();
+    const id = BigInt(tokenId);
+
+    // getVoucher 返回结构体，viem 按位置解码成数组：
+    // [orderId, provider, holder, category, code, title, metadataHash, validFrom, validTo, status]
+    const onChain = await publicClient.readContract({
+      address: voucher,
+      abi: VOUCHER_ABI,
+      functionName: "getVoucher",
+      args: [id],
+    });
+    const onChainProvider = onChain[1];
+    const onChainStatus = Number(onChain[9]);
+
+    if (onChainProvider === ZERO_ADDRESS) {
+      throw new Error(
+        `凭证 #${tokenId} 在链上不存在（tokenId 记错了？链上编号从 1 开始）`
+      );
+    }
+    if (onChainStatus !== 0) {
+      throw new Error(
+        `凭证 #${tokenId} 已是 ${VOUCHER_STATUS_LABEL[onChainStatus] ?? onChainStatus} 状态，不能重复核销`
+      );
+    }
+    if (onChainProvider.toLowerCase() !== wallet.account.address.toLowerCase()) {
+      throw new Error(
+        `凭证 #${tokenId} 由 ${nameOfAgent(onChainProvider)} 签发，请切换到该身份后再核销`
+      );
+    }
+
     const hash = await wallet.writeContract({
       address: voucher,
       abi: VOUCHER_ABI,
       functionName: "redeem",
-      args: [BigInt(tokenId)],
+      args: [id],
       chain: undefined,
     });
     await publicClient.waitForTransactionReceipt({ hash });

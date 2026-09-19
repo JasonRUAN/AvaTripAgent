@@ -1,9 +1,16 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 import { consumeSSE } from "@/lib/sse-client";
 import { buildDemoEvents } from "@/lib/demo-fixture";
 import { BACKEND_URL } from "@/lib/contracts";
+import {
+  PLAN_CACHE_KEY,
+  clearCheckoutSnapshot,
+  readSession,
+  removeSession,
+  writeSession,
+} from "@/lib/session-cache";
 import type {
   AttractionOffer,
   DiningOffer,
@@ -77,6 +84,56 @@ export function toolLabel(name: string): string {
   return TOOL_LABEL[name] ?? name;
 }
 
+// ---------------------------------------------------------------- 跨路由 store
+//
+// 顶部导航是路由跳转（/ → /vouchers → /merchant），切走时工作台整树卸载。
+// 把规划状态放在模块级 store 里，SSE 流在后台继续写入，切回来数据还在；
+// 同时镜像到 sessionStorage，整刷页面后也能恢复快照。
+
+interface PlanStore {
+  state: RunState;
+  /** 最近一次提交的行程需求，用于切页后恢复左侧表单 */
+  request: TripRequest | null;
+}
+
+/** SSR / hydration 阶段使用的固定快照 */
+const SERVER_STORE: PlanStore = { state: INITIAL, request: null };
+
+let cachedStore: PlanStore | null = null;
+
+function loadStore(): PlanStore {
+  if (cachedStore) return cachedStore;
+  const raw = readSession<{ state?: RunState; request?: TripRequest | null }>(PLAN_CACHE_KEY);
+  if (raw?.state) {
+    // 整刷后旧的 SSE 消费者已不存在，running 快照定格为 done
+    const state: RunState =
+      raw.state.status === "running" ? { ...raw.state, status: "done" } : raw.state;
+    cachedStore = { state, request: raw.request ?? null };
+    return cachedStore;
+  }
+  cachedStore = { state: INITIAL, request: null };
+  return cachedStore;
+}
+
+const listeners = new Set<() => void>();
+
+function updateStore(recipe: (prev: PlanStore) => PlanStore): void {
+  cachedStore = recipe(loadStore());
+  writeSession(PLAN_CACHE_KEY, cachedStore);
+  for (const listener of listeners) listener();
+}
+
+function patchState(recipe: (prev: RunState) => RunState): void {
+  updateStore((prev) => ({ ...prev, state: recipe(prev.state) }));
+}
+
+function subscribeStore(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 /**
  * 规划流：真实后端优先，失败自动降级到预置离线流。
  *
@@ -85,7 +142,11 @@ export function toolLabel(name: string): string {
  *   2. SSE 中途报错且还没拿到报价单 → 播放 demo 事件补齐
  */
 export function usePlanRun() {
-  const [state, setState] = useState<RunState>(INITIAL);
+  const store = useSyncExternalStore(
+    subscribeStore,
+    loadStore,
+    () => SERVER_STORE
+  );
   const abortRef = useRef<AbortController | null>(null);
 
   const applyEvent = useCallback((event: StreamEvent, draft: RunState): RunState => {
@@ -175,12 +236,12 @@ export function usePlanRun() {
   /** 播放预置离线流（带节奏，观感接近真实 SSE） */
   const playOffline = useCallback(
     async (request: TripRequest) => {
-      setState((prev) => ({ ...prev, offline: true, status: "running", thought: "" }));
+      patchState((prev) => ({ ...prev, offline: true, status: "running", thought: "" }));
       const events = buildDemoEvents(request);
 
       for (const event of events) {
         await sleep(event.type === "agent.delta" ? 26 : 140);
-        setState((prev) => applyEvent(event, prev));
+        patchState((prev) => applyEvent(event, prev));
       }
     },
     [applyEvent]
@@ -192,7 +253,7 @@ export function usePlanRun() {
       const controller = new AbortController();
       abortRef.current = controller;
 
-      setState({ ...INITIAL, status: "running" });
+      updateStore((prev) => ({ ...prev, request, state: { ...INITIAL, status: "running" } }));
 
       let runId: string | undefined;
       try {
@@ -212,38 +273,41 @@ export function usePlanRun() {
         return;
       }
 
-      setState((prev) => ({ ...prev, runId }));
+      patchState((prev) => ({ ...prev, runId }));
 
       await consumeSSE<StreamEvent>(
         `${BACKEND_URL}/api/runs/${runId}/stream`,
         { method: "GET" },
         {
-          onEvent: (event) => setState((prev) => applyEvent(event, prev)),
+          onEvent: (event) => patchState((prev) => applyEvent(event, prev)),
           onError: async (error) => {
             console.error("[plan] SSE 出错，切换离线兜底:", error);
-            if (!state.quote) await playOffline(request);
+            if (!loadStore().state.quote) await playOffline(request);
           },
         },
         controller.signal
       );
 
       // 流结束时若仍没有报价单（后端中途失败），补一遍离线流
-      setState((prev) => {
+      patchState((prev) => {
         if (prev.quote || prev.offline) return prev;
         if (prev.status === "error") return prev;
         void playOffline(request);
         return prev;
       });
     },
-    [applyEvent, playOffline, state.quote]
+    [applyEvent, playOffline]
   );
 
+  /** 用户主动「重新规划」：清空规划与结算缓存 */
   const reset = useCallback(() => {
     abortRef.current?.abort();
-    setState(INITIAL);
+    clearCheckoutSnapshot();
+    updateStore(() => ({ state: INITIAL, request: null }));
+    removeSession(PLAN_CACHE_KEY);
   }, []);
 
-  return { state, start, reset };
+  return { state: store.state, lastRequest: store.request, start, reset };
 }
 
 function sleep(ms: number): Promise<void> {

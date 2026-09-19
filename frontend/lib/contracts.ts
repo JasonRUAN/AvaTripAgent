@@ -49,6 +49,11 @@ export const USDC_ABI = parseAbi([
   "function allowance(address owner, address spender) view returns (uint256)",
   "function decimals() view returns (uint8)",
   "function symbol() view returns (string)",
+  // 自定义 error 必须写进 ABI，viem 才能把 revert data 解成可读原因；
+  // 否则只能看到 "unknown custom error" + 一串十六进制
+  "error InsufficientBalance()",
+  "error InsufficientAllowance()",
+  "error InvalidReceiver()",
 ]);
 
 export const SETTLEMENT_ABI = parseAbi([
@@ -58,6 +63,18 @@ export const SETTLEMENT_ABI = parseAbi([
   "function itemCount(uint256 orderId) view returns (uint256)",
   "function cancel(uint256 orderId)",
   "event OrderCreated(uint256 indexed orderId, address indexed traveler, uint256 total, bytes32 itineraryHash)",
+  "error NotOperator()",
+  "error NotTraveler()",
+  "error ZeroAmount()",
+  "error EmptyItems()",
+  "error InactiveProvider(address provider)",
+  "error ProviderIsTraveler(address provider)",
+  "error UnknownOrder(uint256 orderId)",
+  "error OrderNotFunded(uint256 orderId)",
+  "error OrderAlreadySettled(uint256 orderId)",
+  "error ItemAlreadySettled(uint256 itemIndex)",
+  "error ItemOutOfRange(uint256 itemIndex)",
+  "error TransferFailed()",
 ]);
 
 export const VOUCHER_ABI = parseAbi([

@@ -1,10 +1,14 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { formatUnits, keccak256, toHex } from "viem";
 import { useAccount, usePublicClient, useReadContract, useWriteContract } from "wagmi";
 import { consumeSSE } from "@/lib/sse-client";
 import { BACKEND_URL, CONTRACTS, SETTLEMENT_ABI, USDC_ABI, isDeployed } from "@/lib/contracts";
+import {
+  loadCheckoutSnapshot,
+  saveCheckoutSnapshot,
+} from "@/lib/session-cache";
 import type { Quote, SettlementEvent, SettlementStep } from "@/lib/types";
 
 export type CheckoutStage =
@@ -14,6 +18,9 @@ export type CheckoutStage =
   | "pay"
   | "settling"
   | "done";
+
+/** 结算进度快照里的 phase */
+type CheckoutSnapshotPhase = "idle" | "settling" | "done";
 
 /** 字符串 tripId → 合约需要的 uint256 */
 function numericTripId(tripId: string): bigint {
@@ -52,18 +59,52 @@ function orderIdFromReceipt(receipt: {
 
 export function useCheckout(params: { quote?: Quote; runId?: string }) {
   const { quote } = params;
+  const runId = params.runId;
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
 
+  /**
+   * 结算进度按 runId 缓存（内存 + sessionStorage）：
+   * 切到「我的凭证 / 商户核销」再回来时能恢复，直到用户主动重新规划。
+   */
+  const snapshot = useMemo(() => loadCheckoutSnapshot(runId), [runId]);
+
   /** 支付之后的阶段；支付前的步骤（连接 / 领币 / 授权 / 支付）由链上状态实时推导 */
-  const [phase, setPhase] = useState<"idle" | "settling" | "done">("idle");
+  const [phase, setPhase] = useState<CheckoutSnapshotPhase>(snapshot?.phase ?? "idle");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [orderId, setOrderId] = useState<string | null>(null);
-  const [payTxHash, setPayTxHash] = useState<`0x${string}` | null>(null);
-  const [steps, setSteps] = useState<SettlementStep[]>([]);
-  const [tokenIds, setTokenIds] = useState<string[]>([]);
+  const [orderId, setOrderId] = useState<string | null>(snapshot?.orderId ?? null);
+  const [payTxHash, setPayTxHash] = useState<`0x${string}` | null>(
+    (snapshot?.payTxHash as `0x${string}` | undefined) ?? null
+  );
+  const [steps, setSteps] = useState<SettlementStep[]>(snapshot?.steps ?? []);
+  const [tokenIds, setTokenIds] = useState<string[]>(snapshot?.tokenIds ?? []);
+
+  /** 同一挂载实例内防止重复连结算流 */
+  const watchingRef = useRef<string | null>(null);
+
+  // 重新规划（runId 变化）时丢弃旧订单的结算状态
+  const prevRunIdRef = useRef(runId);
+  useEffect(() => {
+    if (prevRunIdRef.current !== runId) {
+      prevRunIdRef.current = runId;
+      watchingRef.current = null;
+      setPhase("idle");
+      setOrderId(null);
+      setPayTxHash(null);
+      setSteps([]);
+      setTokenIds([]);
+      setError(null);
+    }
+  }, [runId]);
+
+  // 结算进度持久化：切走再切回来可恢复；runId 变化后旧快照不再写入
+  useEffect(() => {
+    if (!runId) return;
+    if (phase === "idle" && steps.length === 0 && !orderId) return;
+    saveCheckoutSnapshot({ runId, phase, orderId, payTxHash, steps, tokenIds });
+  }, [runId, phase, orderId, payTxHash, steps, tokenIds]);
 
   const total = useMemo(() => BigInt(quote?.total ?? "0"), [quote]);
 
@@ -179,6 +220,7 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
   );
 
   const watchSettlement = useCallback(async (orderIdValue: string) => {
+    watchingRef.current = orderIdValue;
     setPhase("settling");
 
     await consumeSSE<SettlementEvent>(
@@ -204,6 +246,17 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
     );
   }, []);
 
+  /**
+   * 从其他分类页切回来、且恢复出的快照还停在「结算中」时，重新挂上 SSE。
+   * 后端 EventChannel 对新订阅者会先回放历史事件（frontend 按 step.key 去重、
+   * settlement.done 幂等），所以重连是安全的。
+   */
+  useEffect(() => {
+    if (phase === "settling" && orderId && watchingRef.current !== orderId) {
+      void watchSettlement(orderId);
+    }
+  }, [phase, orderId, watchSettlement]);
+
   const pay = useCallback(async () => {
     if (!quote) return;
     setError(null);
@@ -219,6 +272,20 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
 
     if (!address) {
       setError("钱包未连接");
+      return;
+    }
+
+    // 合约里 provider 不能等于 msg.sender（ProviderIsTraveler），否则
+    // estimateGas 就会 revert，前端拿到的是一个解不开的自定义 error。
+    // 演示时很容易误把服务商 Agent 的钱包当成旅客钱包连上，这里提前拦下。
+    const selfDealing = quote.lineItems.find(
+      (item) => item.provider.toLowerCase() === address.toLowerCase()
+    );
+    if (selfDealing) {
+      setError(
+        `当前钱包就是服务商「${selfDealing.providerName}」的地址，` +
+          `合约不允许服务商给自己付款（ProviderIsTraveler）。请切换到旅客钱包后重试。`
+      );
       return;
     }
 

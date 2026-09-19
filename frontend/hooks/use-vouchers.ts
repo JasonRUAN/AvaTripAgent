@@ -6,6 +6,8 @@ import { BACKEND_URL } from "@/lib/contracts";
 import { buildDemoVouchers } from "@/lib/demo-fixture";
 import type { VoucherDetail } from "@/lib/types";
 
+const EMPTY: VoucherDetail[] = [];
+
 /**
  * 凭证列表。
  *
@@ -14,39 +16,52 @@ import type { VoucherDetail } from "@/lib/types";
  */
 export function useVouchers() {
   const { address } = useAccount();
-  const [items, setItems] = useState<VoucherDetail[]>([]);
+  /** 后端返回的真实凭证明细；未连接钱包时视为空 */
+  const [fetched, setFetched] = useState<VoucherDetail[]>([]);
   const [loading, setLoading] = useState(false);
+  /** true = 后端网络不可达；后端可达但列表为空不算 offline */
   const [offline, setOffline] = useState(false);
+  /** true = 当前展示的是演示数据（后端无真实记录或不可达） */
+  const [demo, setDemo] = useState(false);
+
+  // 未连接钱包时直接推导为空列表，避免在 effect 里同步 setState
+  const items = address ? fetched : EMPTY;
 
   useEffect(() => {
-    if (!address) {
-      setItems([]);
-      return;
-    }
+    if (!address) return;
 
     let cancelled = false;
-    setLoading(true);
 
-    fetch(`${BACKEND_URL}/api/vouchers?address=${address}`)
-      .then((response) => (response.ok ? response.json() : Promise.reject(new Error(String(response.status)))))
-      .then((payload: { vouchers: VoucherDetail[] }) => {
+    // 放入微任务，避免在 effect 内同步 setState 触发级联渲染
+    Promise.resolve().then(async () => {
+      if (cancelled) return;
+      setLoading(true);
+
+      try {
+        const response = await fetch(`${BACKEND_URL}/api/vouchers?address=${address}`);
+        if (!response.ok) throw new Error(String(response.status));
+        const payload = (await response.json()) as { vouchers: VoucherDetail[] };
         if (cancelled) return;
+
+        setOffline(false);
         if (payload.vouchers.length > 0) {
-          setItems(payload.vouchers);
-          setOffline(false);
+          setFetched(payload.vouchers);
+          setDemo(false);
         } else {
-          setItems(buildDemoVouchers(address));
-          setOffline(true);
+          // 后端可达但无记录（如发券后后端重启，内存明细已清空），
+          // 退回演示数据但不提示"未连接"。
+          setFetched(buildDemoVouchers(address));
+          setDemo(true);
         }
-      })
-      .catch(() => {
+      } catch {
         if (cancelled) return;
-        setItems(buildDemoVouchers(address));
+        setFetched(buildDemoVouchers(address));
         setOffline(true);
-      })
-      .finally(() => {
+        setDemo(true);
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    });
 
     return () => {
       cancelled = true;
@@ -70,5 +85,5 @@ export function useVouchers() {
     [items]
   );
 
-  return { address, items, grouped, stats, loading, offline };
+  return { address, items, grouped, stats, loading, offline, demo };
 }
