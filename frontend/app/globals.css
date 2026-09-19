@@ -81,6 +81,7 @@
   --animate-caret: caret 1s steps(2, start) infinite;
   --animate-shimmer: shimmer 1.6s linear infinite;
   --animate-stamp: stamp 0.5s var(--ease-pop) both;
+  --animate-sheen: sheen 0.9s var(--ease-pop) both;
 
   @keyframes fade-up {
     from {
@@ -157,6 +158,21 @@
     100% {
       opacity: 1;
       transform: scale(1) rotate(-8deg);
+    }
+  }
+
+  /* 展开时一道光从卡头扫过 */
+  @keyframes sheen {
+    0% {
+      opacity: 0;
+      transform: translateX(-140%) skewX(-18deg);
+    }
+    35% {
+      opacity: 0.6;
+    }
+    100% {
+      opacity: 0;
+      transform: translateX(240%) skewX(-18deg);
     }
   }
 }
@@ -272,6 +288,20 @@
   background-clip: text;
   -webkit-background-clip: text;
   color: transparent;
+}
+
+/* 行程卡展开瞬间的高光扫过层 */
+@utility trip-sheen {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+    100deg,
+    transparent 15%,
+    rgb(255 255 255 / 0.85) 48%,
+    transparent 82%
+  );
+  animation: var(--animate-sheen);
 }
 
 @utility skeleton-shimmer {

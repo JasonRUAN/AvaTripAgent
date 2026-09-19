@@ -132,6 +132,8 @@ export interface QuoteLineItem {
   amount: string;
   itemHash: Hex;
   label: string;
+  /** 关联的候选条目 id（航班/酒店/景点/餐厅 offer id），用于按条目发券 */
+  itemId?: string;
 }
 
 export interface Quote {

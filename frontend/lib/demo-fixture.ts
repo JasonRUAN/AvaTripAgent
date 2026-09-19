@@ -328,14 +328,26 @@ export function buildDemoQuote(request: TripRequest): Quote {
   const hotelTotal = hotel.total;
 
   const lineItems = [
+    // 机票：每个航段一条（往返 = 两张机票凭证）
     {
       provider: DEMO_AGENTS.flight,
       providerName: DEMO_AGENT_NAMES[DEMO_AGENTS.flight],
       category: 0 as const,
-      amount: toUnits(flightTotal).toString(),
-      itemHash: hashLabel(`flight:${flight.flightNo}:${flightBack.flightNo}`),
-      label: `${flight.flightNo} 上海浦东 → 东京羽田 / ${flightBack.flightNo} 返程 ×${pax} 人`,
+      amount: toUnits(flight.pricePerPerson * pax).toString(),
+      itemHash: hashLabel(`flight:${flight.id}`),
+      label: `${flight.flightNo} ${flight.from.code} → ${flight.to.code} ×${pax} 人`,
+      itemId: flight.id,
     },
+    {
+      provider: DEMO_AGENTS.flight,
+      providerName: DEMO_AGENT_NAMES[DEMO_AGENTS.flight],
+      category: 0 as const,
+      amount: toUnits(flightBack.pricePerPerson * pax).toString(),
+      itemHash: hashLabel(`flight:${flightBack.id}`),
+      label: `${flightBack.flightNo} ${flightBack.from.code} → ${flightBack.to.code} ×${pax} 人`,
+      itemId: flightBack.id,
+    },
+    // 酒店：每家一条
     {
       provider: DEMO_AGENTS.hotel,
       providerName: DEMO_AGENT_NAMES[DEMO_AGENTS.hotel],
@@ -343,22 +355,53 @@ export function buildDemoQuote(request: TripRequest): Quote {
       amount: toUnits(hotelTotal).toString(),
       itemHash: hashLabel(`hotel:${hotel.id}`),
       label: `${hotel.name} ${hotel.roomType} ×${hotel.nights} 晚`,
+      itemId: hotel.id,
+    },
+    // 门票：每个景点一条
+    {
+      provider: DEMO_AGENTS.attraction,
+      providerName: DEMO_AGENT_NAMES[DEMO_AGENTS.attraction],
+      category: 2 as const,
+      amount: toUnits(attractions[0].pricePerPerson * pax).toString(),
+      itemHash: hashLabel(`attraction:${attractions[0].id}`),
+      label: `${attractions[0].name} ×${pax} 人`,
+      itemId: attractions[0].id,
     },
     {
       provider: DEMO_AGENTS.attraction,
       providerName: DEMO_AGENT_NAMES[DEMO_AGENTS.attraction],
       category: 2 as const,
-      amount: toUnits(attractionTotal).toString(),
-      itemHash: hashLabel(`attraction:${attractions.map((a) => a.id).join(",")}`),
-      label: `${attractions[0].name} + ${attractions[2].name} ×${pax} 人`,
+      amount: toUnits(attractions[2].pricePerPerson * pax).toString(),
+      itemHash: hashLabel(`attraction:${attractions[2].id}`),
+      label: `${attractions[2].name} ×${pax} 人`,
+      itemId: attractions[2].id,
+    },
+    // 餐饮：每家一条
+    {
+      provider: DEMO_AGENTS.dining,
+      providerName: DEMO_AGENT_NAMES[DEMO_AGENTS.dining],
+      category: 3 as const,
+      amount: toUnits(dinings[0].pricePerPerson * pax).toString(),
+      itemHash: hashLabel(`dining:${dinings[0].id}`),
+      label: `${dinings[0].name} ×${pax} 人`,
+      itemId: dinings[0].id,
     },
     {
       provider: DEMO_AGENTS.dining,
       providerName: DEMO_AGENT_NAMES[DEMO_AGENTS.dining],
       category: 3 as const,
-      amount: toUnits(diningTotal).toString(),
-      itemHash: hashLabel(`dining:${dinings.map((d) => d.id).join(",")}`),
-      label: `${dinings[0].name} + ${dinings[1].name} 等 ×${pax} 人`,
+      amount: toUnits(dinings[1].pricePerPerson * pax).toString(),
+      itemHash: hashLabel(`dining:${dinings[1].id}`),
+      label: `${dinings[1].name} ×${pax} 人`,
+      itemId: dinings[1].id,
+    },
+    {
+      provider: DEMO_AGENTS.dining,
+      providerName: DEMO_AGENT_NAMES[DEMO_AGENTS.dining],
+      category: 3 as const,
+      amount: toUnits(167 * pax).toString(),
+      itemHash: hashLabel(`dining:street:${pax}`),
+      label: `商店街小吃 ×${pax} 人`,
     },
   ];
 

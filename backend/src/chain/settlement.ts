@@ -142,7 +142,13 @@ export async function settleOrder(params: SettleParams): Promise<void> {
       emit({ type: "settlement.step", step: { ...step } });
 
       // ② 服务商 Agent 收到款，立刻用自己的私钥发券
-      const { title, details } = voucherContent(category, lineItem.label, offers, request);
+      const { title, details } = voucherContent(
+        category,
+        lineItem,
+        offers,
+        request,
+        quote.tripId
+      );
 
       const issued = await issueVoucher({
         category,
@@ -172,33 +178,53 @@ export async function settleOrder(params: SettleParams): Promise<void> {
   emit({ type: "settlement.done", orderId, tokenIds });
 }
 
-/** 按品类拼出凭证标题与链下明细 */
+/**
+ * 按单个条目拼出凭证标题与链下明细。
+ *
+ * 每条 lineItem 对应一张凭证：往返两个航段是两张机票券、
+ * 每家酒店 / 景点 / 餐厅各一张，而不是把一个品类的所有条目塞进一张。
+ * details 里统一写入「行程」标识，前端按它把同一趟行程的凭证聚合在一起。
+ */
 function voucherContent(
   category: CategoryCode,
-  fallbackLabel: string,
+  lineItem: { label: string; itemId?: string },
   offers: ReturnType<typeof offersByRun.get>,
-  request?: { destination?: string; pax?: number; startDate?: string }
+  request?: { destination?: string; pax?: number; startDate?: string },
+  tripId?: string
 ): { title: string; details: Record<string, string> } {
   const key = CATEGORY_TO_KEY[category];
 
   if (!offers) {
-    return { title: fallbackLabel, details: { 说明: fallbackLabel } };
+    return {
+      title: lineItem.label,
+      details: { ...(tripId ? { 行程: tripId } : {}), 说明: lineItem.label },
+    };
   }
 
   if (key === "flight") {
-    const [outbound, inbound] = offers.flights;
+    // itemId 精确匹配；老数据没有 itemId 时按航班号兜底
+    const flight =
+      (lineItem.itemId && offers.flights.find((f) => f.id === lineItem.itemId)) ||
+      offers.flights.find((f) => lineItem.label.includes(f.flightNo)) ||
+      offers.flights[0];
+
+    if (!flight) {
+      return {
+        title: lineItem.label,
+        details: { ...(tripId ? { 行程: tripId } : {}), 说明: lineItem.label },
+      };
+    }
+
     return {
-      title: `${outbound?.flightNo ?? "航班"} ${outbound?.from.code ?? ""} → ${outbound?.to.code ?? ""}`,
+      title: `${flight.flightNo} ${flight.from.code} → ${flight.to.code}`,
       details: {
-        航司: outbound?.carrier ?? "",
-        机型: outbound?.aircraft ?? "",
-        去程: outbound
-          ? `${outbound.flightNo} ${outbound.from.airport}(${outbound.from.code}) ${outbound.from.terminal} → ${outbound.to.airport}(${outbound.to.code}) ${outbound.departAt} 起飞`
-          : "",
-        返程: inbound
-          ? `${inbound.flightNo} ${inbound.from.airport}(${inbound.from.code}) → ${inbound.to.airport}(${inbound.to.code}) ${inbound.departAt} 起飞`
-          : "",
-        舱位: outbound?.cabin ?? "",
+        ...(tripId ? { 行程: tripId } : {}),
+        航司: flight.carrier,
+        机型: flight.aircraft,
+        航班: `${flight.flightNo} ${flight.from.airport}(${flight.from.code}) ${flight.from.terminal} → ${flight.to.airport}(${flight.to.code}) ${flight.to.terminal}`,
+        起飞: `${flight.departAt} 起飞`,
+        到达: `${flight.arriveAt} 到达`,
+        舱位: flight.cabin,
         乘客: `${request?.pax ?? 2} 人`,
         行李: "每人 1 件 23kg 托运 + 7kg 手提",
       },
@@ -206,40 +232,82 @@ function voucherContent(
   }
 
   if (key === "hotel") {
-    const hotel = offers.hotels[0];
+    const hotel =
+      (lineItem.itemId && offers.hotels.find((h) => h.id === lineItem.itemId)) ||
+      offers.hotels.find((h) => lineItem.label.includes(h.name)) ||
+      offers.hotels[0];
+
+    if (!hotel) {
+      return {
+        title: lineItem.label,
+        details: { ...(tripId ? { 行程: tripId } : {}), 说明: lineItem.label },
+      };
+    }
+
     return {
-      title: hotel?.name ?? fallbackLabel,
+      title: hotel.name,
       details: {
-        酒店: hotel?.name ?? "",
-        星级: hotel ? `${hotel.stars} 星` : "",
-        地址: hotel?.address ?? "",
-        房型: hotel?.roomType ?? "",
-        入住: hotel?.checkIn ?? "",
-        退房: hotel?.checkOut ?? "",
-        房间数: hotel ? `${hotel.rooms} 间 × ${hotel.nights} 晚` : "",
+        ...(tripId ? { 行程: tripId } : {}),
+        酒店: hotel.name,
+        星级: `${hotel.stars} 星`,
+        地址: hotel.address,
+        房型: hotel.roomType,
+        入住: hotel.checkIn,
+        退房: hotel.checkOut,
+        房间数: `${hotel.rooms} 间 × ${hotel.nights} 晚`,
       },
     };
   }
 
   if (key === "attraction") {
-    const items = offers.attractions.slice(0, 4);
+    const attraction =
+      (lineItem.itemId && offers.attractions.find((a) => a.id === lineItem.itemId)) ||
+      offers.attractions.find((a) => lineItem.label.includes(a.name)) ||
+      offers.attractions[0];
+
+    if (!attraction) {
+      return {
+        title: lineItem.label,
+        details: { ...(tripId ? { 行程: tripId } : {}), 说明: lineItem.label },
+      };
+    }
+
     return {
-      title: items.map((a) => a.name).join(" + ") || fallbackLabel,
-      details: Object.fromEntries(
-        items.map((a) => [
-          a.name,
-          `${a.area} · ${a.durationMinutes} 分钟 · ${a.openHours}${a.needBooking ? " · 需预约" : ""}`,
-        ])
-      ),
+      title: attraction.name,
+      details: {
+        ...(tripId ? { 行程: tripId } : {}),
+        景点: attraction.name,
+        区域: attraction.area,
+        游玩时长: `${attraction.durationMinutes} 分钟`,
+        开放时间: attraction.openHours,
+        预约: attraction.needBooking ? "需提前预约" : "免预约",
+        人数: `${request?.pax ?? 2} 人`,
+      },
     };
   }
 
-  const items = offers.restaurants.slice(0, 4);
+  const dining =
+    (lineItem.itemId && offers.restaurants.find((d) => d.id === lineItem.itemId)) ||
+    offers.restaurants.find((d) => lineItem.label.includes(d.name)) ||
+    offers.restaurants[0];
+
+  if (!dining) {
+    return {
+      title: lineItem.label,
+      details: { ...(tripId ? { 行程: tripId } : {}), 说明: lineItem.label },
+    };
+  }
+
   return {
-    title: items.map((d) => d.name).join(" + ") || fallbackLabel,
-    details: Object.fromEntries(
-      items.map((d) => [d.name, `${d.area} · ${d.cuisine} · 约 ${d.durationMinutes} 分钟`])
-    ),
+    title: dining.name,
+    details: {
+      ...(tripId ? { 行程: tripId } : {}),
+      餐厅: dining.name,
+      区域: dining.area,
+      菜系: dining.cuisine,
+      用餐时长: `约 ${dining.durationMinutes} 分钟`,
+      人数: `${request?.pax ?? 2} 人`,
+    },
   };
 }
 

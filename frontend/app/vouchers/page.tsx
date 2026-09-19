@@ -1,13 +1,32 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { DemoBadge } from "@/components/demo-badge";
-import { CATEGORY_STYLE, VoucherCard } from "@/components/voucher-card";
+import { TripCard } from "@/components/trip-card";
 import { WalletButton } from "@/components/wallet-button";
 import { useVouchers } from "@/hooks/use-vouchers";
 
 export default function VouchersPage() {
-  const { address, items, grouped, stats, loading, error, refresh } = useVouchers();
+  const { address, items, trips, stats, loading, error, refresh } = useVouchers();
+
+  // 默认只展开最新一趟行程（列表首位），其余折叠；
+  // manual 里只记录用户手动切换过的行程，后读取到的行程仍按默认规则。
+  const [manual, setManual] = useState<Record<string, boolean>>({});
+  const latestOrderId = trips[0]?.orderId;
+
+  const isOpen = (orderId: string) => manual[orderId] ?? orderId === latestOrderId;
+
+  const toggleTrip = (orderId: string) =>
+    setManual((prev) => ({ ...prev, [orderId]: !isOpen(orderId) }));
+
+  const allCollapsed =
+    trips.length > 0 && trips.every((trip) => !isOpen(trip.orderId));
+
+  const toggleAll = () =>
+    setManual(
+      Object.fromEntries(trips.map((trip) => [trip.orderId, allCollapsed]))
+    );
 
   if (!address) {
     return (
@@ -38,6 +57,15 @@ export default function VouchersPage() {
         </div>
         <div className="flex items-center gap-2">
           {error ? <DemoBadge tone="warn" label={error} /> : null}
+          {trips.length > 0 ? (
+            <button
+              type="button"
+              onClick={toggleAll}
+              className="cursor-pointer rounded-full border border-brand-200 bg-white/90 px-3.5 py-2 text-xs font-bold text-ink-700 shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-lift"
+            >
+              {allCollapsed ? "全部展开" : "全部收起"}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={refresh}
@@ -111,32 +139,16 @@ export default function VouchersPage() {
         </div>
       ) : null}
 
-      <div className="flex flex-col gap-6">
-        {[0, 1, 2, 3].map((category) => {
-          const list = grouped[category] ?? [];
-          if (list.length === 0) return null;
-          const style = CATEGORY_STYLE[category]!;
-
-          return (
-            <section key={category}>
-              <div className="mb-3 flex items-center gap-2">
-                <span className="text-base">{style.icon}</span>
-                <h2 className="font-display text-base font-bold text-ink-900">
-                  {style.label}
-                </h2>
-                <span className="rounded-full bg-brand-100 px-2 py-0.5 text-[11px] font-bold text-brand-700">
-                  {list.length} 张
-                </span>
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                {list.map((voucher) => (
-                  <VoucherCard key={voucher.tokenId} voucher={voucher} />
-                ))}
-              </div>
-            </section>
-          );
-        })}
+      <div className="flex flex-col gap-5">
+        {trips.map((trip, tripIndex) => (
+          <TripCard
+            key={trip.orderId}
+            trip={trip}
+            open={isOpen(trip.orderId)}
+            onToggle={() => toggleTrip(trip.orderId)}
+            isLatest={tripIndex === 0}
+          />
+        ))}
       </div>
     </main>
   );

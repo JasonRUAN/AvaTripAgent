@@ -219,7 +219,13 @@ export function dayDate(request: TripRequest, index: number): string {
   return addDays(request.startDate, index);
 }
 
-/** 汇总报价单：按服务商 Agent 归集，每项对应一个 chain 上的 lineItem */
+/**
+ * 汇总报价单：按服务商 Agent 归集，每项对应一个 chain 上的 lineItem。
+ *
+ * 关键规则：**每个实际条目一条 lineItem**——
+ * 往返两个航段是两张机票券、多家酒店各一张、每个景点/餐厅各一张，
+ * 而不是把整个品类合并成一条（合并会导致每个品类只能发一张凭证）。
+ */
 export function buildQuote(params: {
   runId: string;
   tripId: string;
@@ -228,12 +234,6 @@ export function buildQuote(params: {
   days: ItineraryDay[];
 }): { quote: Quote; budgetItems: BudgetItem[] } {
   const { runId, tripId, request, offers, days } = params;
-
-  const flightAmount = offers.flights.reduce(
-    (sum, f) => sum + f.pricePerPerson * request.pax,
-    0
-  );
-  const hotelAmount = offers.hotels[0]?.total ?? 0;
 
   const usedAttractions = new Set<string>();
   const usedDining = new Set<string>();
@@ -244,37 +244,68 @@ export function buildQuote(params: {
     }
   }
 
-  const attractionAmount = offers.attractions
-    .filter((a) => usedAttractions.has(a.id))
-    .reduce((sum, a) => sum + a.pricePerPerson * request.pax, 0);
-  const diningAmount = offers.restaurants
-    .filter((d) => usedDining.has(d.id))
-    .reduce((sum, d) => sum + d.pricePerPerson * request.pax, 0);
+  /** 一个条目 → 一条 lineItem */
+  const lineItems: QuoteLineItem[] = [];
 
-  const amounts: Record<CategoryCode, number> = {
-    0: round2(flightAmount),
-    1: round2(hotelAmount),
-    2: round2(attractionAmount),
-    3: round2(diningAmount),
-  };
-
-  const labels: Record<CategoryCode, string> = {
-    0: `${offers.flights.map((f) => f.flightNo).join(" / ")} ×${request.pax} 人`,
-    1: `${offers.hotels[0]?.name ?? "酒店"} ${offers.hotels[0]?.roomType ?? ""} ×${offers.hotels[0]?.nights ?? 0} 晚`,
-    2: `${offers.attractions.filter((a) => usedAttractions.has(a.id)).map((a) => a.name).join(" + ") || "景点"} ×${request.pax} 人`,
-    3: `${offers.restaurants.filter((d) => usedDining.has(d.id)).map((d) => d.name).join(" + ") || "餐饮"} ×${request.pax} 人`,
-  };
-
-  const lineItems: QuoteLineItem[] = ([0, 1, 2, 3] as CategoryCode[])
-    .filter((category) => amounts[category] > 0)
-    .map((category) => ({
+  const push = (
+    category: CategoryCode,
+    itemId: string,
+    label: string,
+    amountUsd: number
+  ) => {
+    if (amountUsd <= 0) return;
+    lineItems.push({
       provider: providerAddress(category),
       providerName: providerName(category),
       category,
-      amount: toUnits(amounts[category]).toString(),
-      itemHash: keccak256(toHex(`${tripId}:${category}:${labels[category]}`)),
-      label: labels[category],
-    }));
+      amount: toUnits(round2(amountUsd)).toString(),
+      itemHash: keccak256(toHex(`${tripId}:${category}:${itemId}`)),
+      label,
+      itemId,
+    });
+  };
+
+  // 机票：每个航段一条（往返 = 两张机票凭证）
+  for (const flight of offers.flights) {
+    push(
+      0,
+      flight.id,
+      `${flight.flightNo} ${flight.from.code} → ${flight.to.code} ×${request.pax} 人`,
+      flight.pricePerPerson * request.pax
+    );
+  }
+
+  // 酒店：每家酒店一条（多段住宿可发多张）
+  for (const hotel of offers.hotels) {
+    push(
+      1,
+      hotel.id,
+      `${hotel.name} ${hotel.roomType} ×${hotel.nights} 晚`,
+      hotel.total
+    );
+  }
+
+  // 门票：行程里用到的每个景点一条
+  for (const attraction of offers.attractions) {
+    if (!usedAttractions.has(attraction.id)) continue;
+    push(
+      2,
+      attraction.id,
+      `${attraction.name} ×${request.pax} 人`,
+      attraction.pricePerPerson * request.pax
+    );
+  }
+
+  // 餐饮：行程里用到的每家餐厅一条
+  for (const dining of offers.restaurants) {
+    if (!usedDining.has(dining.id)) continue;
+    push(
+      3,
+      dining.id,
+      `${dining.name} ×${request.pax} 人`,
+      dining.pricePerPerson * request.pax
+    );
+  }
 
   const totalUsd = round2(
     lineItems.reduce((sum, item) => sum + Number(item.amount) / 1_000_000, 0)

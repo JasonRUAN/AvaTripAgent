@@ -168,6 +168,8 @@ export interface QuoteLineItem {
   itemHash: Hex;
   /** 人类可读描述，如 "NH959 上海浦东 → 东京羽田 ×2 人" */
   label: string;
+  /** 关联的候选条目 id（航班/酒店/景点/餐厅 offer id），用于按条目发券 */
+  itemId?: string;
 }
 
 export interface Quote {
