@@ -196,16 +196,14 @@ app.get("/api/vouchers/:tokenId", async (c) => {
   return c.json(voucher);
 });
 
-/** 商户核销端：以指定服务商 Agent 的身份调用 redeem */
+/** 商户核销端：身份自动匹配——按链上凭证的签发 provider 选用对应的 Agent 私钥签名 */
 app.post("/api/vouchers/:tokenId/redeem", async (c) => {
   const tokenId = c.req.param("tokenId");
+  // 兼容旧调用方：body 里的 provider 只作提示，实际以链上签发者为准
   const body = (await c.req.json().catch(() => null)) as { provider?: string } | null;
-  const which = body?.provider;
-  console.log(`[POST /api/vouchers/${tokenId}/redeem] provider=${which ?? "(缺失)"}`);
-
-  if (which !== "flight" && which !== "hotel" && which !== "attraction" && which !== "dining") {
-    return c.json({ error: "INVALID_PROVIDER" }, 400);
-  }
+  console.log(
+    `[POST /api/vouchers/${tokenId}/redeem] 身份自动匹配${body?.provider ? `（调用方提示 ${body.provider}）` : ""}`
+  );
 
   // 不能只看进程内索引：凭证是链上资产，内存没有时先回源链上确认，
   // 否则后端重启后所有已签发凭证都会被误判成「凭证不存在」。
@@ -218,7 +216,7 @@ app.post("/api/vouchers/:tokenId/redeem", async (c) => {
 
   try {
     const { redeemVoucher } = await import("./chain/voucher");
-    const result = await redeemVoucher(tokenId, which);
+    const result = await redeemVoucher(tokenId);
     return c.json({ tokenId, ...result });
   } catch (error) {
     console.error("[redeem] 核销失败:", error);

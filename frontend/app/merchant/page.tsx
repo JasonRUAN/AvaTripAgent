@@ -6,18 +6,8 @@ import { VoucherCard } from "@/components/voucher-card";
 import { BACKEND_URL } from "@/lib/contracts";
 import type { VoucherDetail } from "@/lib/types";
 
-const PROVIDERS = [
-  { key: "flight", name: "AvaFlights Agent", icon: "✈️", gradient: "linear-gradient(135deg,#2e7bf6,#4c9aff)" },
-  { key: "hotel", name: "AvaStays Agent", icon: "🏨", gradient: "linear-gradient(135deg,#7c6bf5,#a78bfa)" },
-  { key: "attraction", name: "AvaTickets Agent", icon: "🎟️", gradient: "linear-gradient(135deg,#17c964,#5fd98d)" },
-  { key: "dining", name: "AvaTables Agent", icon: "🍜", gradient: "linear-gradient(135deg,#ff8a3d,#ffb020)" },
-] as const;
-
-type ProviderKey = (typeof PROVIDERS)[number]["key"];
-
-/** 商户核销端（演示）：选一个服务商 Agent 身份，输入 tokenId 完成链上核销 */
+/** 商户核销端（演示）：输入 tokenId，后端自动匹配签发 Agent 身份完成链上核销 */
 export default function MerchantPage() {
-  const [provider, setProvider] = useState<ProviderKey>("flight");
   const [tokenId, setTokenId] = useState("1");
   const [detail, setDetail] = useState<VoucherDetail | null>(null);
   const [busy, setBusy] = useState(false);
@@ -53,13 +43,12 @@ export default function MerchantPage() {
     try {
       const response = await fetch(`${BACKEND_URL}/api/vouchers/${tokenId}/redeem`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider }),
       });
       const payload = (await response.json()) as {
         error?: string;
         message?: string;
         txHash?: string;
+        providerName?: string;
       };
 
       if (!response.ok) {
@@ -72,7 +61,10 @@ export default function MerchantPage() {
       }
 
       setDetail((prev) => (prev ? { ...prev, status: "Redeemed" } : prev));
-      setMessage(`核销成功${payload.txHash ? ` · 交易已上链` : " · 演示模式（无链上交易）"}`);
+      setMessage(
+        `核销成功 · ${payload.providerName ?? detail?.providerName ?? "签发 Agent"} 身份已上链标记` +
+          `${payload.txHash ? "" : "（演示模式，无链上交易）"}`
+      );
     } catch {
       setMessage("后端不可达，请确认 backend 已启动");
     } finally {
@@ -87,7 +79,7 @@ export default function MerchantPage() {
           商户核销端
         </h1>
         <p className="mt-1 text-xs text-ink-500">
-          出示二维码 → 商家扫码验证 → 以服务商 Agent 身份在链上标记已核销 → 不可重复使用
+          出示二维码 → 商家扫码验证 → 自动以签发该凭证的服务商 Agent 身份在链上标记已核销 → 不可重复使用
         </p>
       </div>
 
@@ -95,40 +87,7 @@ export default function MerchantPage() {
         <div className="glass-card flex flex-col gap-4 rounded-3xl p-5">
           <div>
             <p className="mb-2 text-xs font-bold tracking-wide text-ink-300">
-              ① 选择核销身份
-            </p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {PROVIDERS.map((item) => {
-                const active = item.key === provider;
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => setProvider(item.key)}
-                    className={`cursor-pointer rounded-2xl border p-3 text-center transition-all hover:-translate-y-0.5 ${
-                      active
-                        ? "border-brand-300 bg-white shadow-lift"
-                        : "border-brand-100 bg-white/60"
-                    }`}
-                  >
-                    <span
-                      className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl text-lg"
-                      style={{ backgroundImage: item.gradient }}
-                    >
-                      {item.icon}
-                    </span>
-                    <p className="mt-1.5 truncate text-[11px] font-bold text-ink-900">
-                      {item.name}
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <div>
-            <p className="mb-2 text-xs font-bold tracking-wide text-ink-300">
-              ② 输入凭证编号
+              ① 输入凭证编号
             </p>
             <input
               value={tokenId}
@@ -137,6 +96,14 @@ export default function MerchantPage() {
               placeholder="如 1"
               className="w-full rounded-xl border border-brand-100 bg-white px-4 py-3 font-display text-lg font-bold text-ink-900 outline-none transition-all focus:border-brand-400 focus:shadow-glow"
             />
+            <p className="mt-2 text-xs text-ink-500">
+              核销身份自动匹配：
+              {detail ? (
+                <span className="font-bold text-ink-900">{detail.providerName}</span>
+              ) : (
+                <span className="text-ink-300">读取凭证后显示签发 Agent</span>
+              )}
+            </p>
           </div>
 
           <button
@@ -145,7 +112,7 @@ export default function MerchantPage() {
             onClick={redeem}
             className="sky-gradient flex h-12 w-full cursor-pointer items-center justify-center rounded-2xl text-base font-bold text-white shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {busy ? "核销中…" : "③ 确认核销"}
+            {busy ? "核销中…" : "② 确认核销"}
           </button>
 
           {message ? (

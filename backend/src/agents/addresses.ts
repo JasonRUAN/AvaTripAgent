@@ -53,6 +53,20 @@ export function providerName(category: CategoryCode): string {
   return AGENT_NAMES[CATEGORY_TO_KEY[category]];
 }
 
+/**
+ * 地址 → Agent 标识（核销时用它反查该用哪把私钥签名）。
+ * 找不到返回 null：说明该凭证不是本后端托管的服务商签发的。
+ */
+export function keyOfAgent(
+  address: string
+): "flight" | "hotel" | "attraction" | "dining" | null {
+  const lower = address.toLowerCase();
+  for (const key of ["flight", "hotel", "attraction", "dining"] as const) {
+    if (AGENT_ADDRESSES[key].toLowerCase() === lower) return key;
+  }
+  return null;
+}
+
 /** 地址 → 名称（验证页从 AgentRegistry 读不到时用它兜底） */
 export function nameOfAgent(address: string): string {
   const lower = address.toLowerCase();

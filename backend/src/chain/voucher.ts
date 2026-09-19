@@ -3,6 +3,7 @@ import {
   AGENT_ADDRESSES,
   AGENT_NAMES,
   CATEGORY_TO_KEY,
+  keyOfAgent,
   nameOfAgent,
 } from "../agents/addresses";
 import { deployment, env, hasChain } from "../env";
@@ -246,19 +247,23 @@ export async function ensureVoucher(tokenId: string): Promise<VoucherDetail | nu
 /**
  * 商户核销：只有发行该凭证的服务商 Agent 才能调用 redeem，且不可重复使用。
  *
+ * 身份自动匹配：先读链上 getVoucher 拿到签发者 provider 地址，
+ * 再反查出对应的 Agent 私钥去签名，调用方无需（也无法）手工指定身份。
+ *
  * 写交易前先读一次链上状态：合约里的 require 条件都在链下先过一遍，
- * 这样失败时能给出「凭证不存在 / 已核销 / 身份不对」这类可读原因，
+ * 这样失败时能给出「凭证不存在 / 已核销 / 签发者非本后端托管 Agent」这类可读原因，
  * 而不是只能看到一个无法解码的 revert 签名。
  */
-export async function redeemVoucher(
-  tokenId: string,
-  which: "flight" | "hotel" | "attraction" | "dining"
-): Promise<{ txHash?: `0x${string}`; status: "Redeemed" }> {
+export async function redeemVoucher(tokenId: string): Promise<{
+  txHash?: `0x${string}`;
+  status: "Redeemed";
+  provider?: string;
+  providerName?: string;
+}> {
   const { vouchers } = await import("../store");
   const detail = vouchers.get(tokenId);
 
   if (hasChain) {
-    const wallet = agentWallet(which);
     const { voucher } = contractAddresses();
     const id = BigInt(tokenId);
 
@@ -282,11 +287,17 @@ export async function redeemVoucher(
         `凭证 #${tokenId} 已是 ${VOUCHER_STATUS_LABEL[onChainStatus] ?? onChainStatus} 状态，不能重复核销`
       );
     }
-    if (onChainProvider.toLowerCase() !== wallet.account.address.toLowerCase()) {
+
+    // 自动匹配：链上 provider 地址 → 本后端托管的 Agent 私钥
+    const which = keyOfAgent(onChainProvider);
+    if (!which) {
       throw new Error(
-        `凭证 #${tokenId} 由 ${nameOfAgent(onChainProvider)} 签发，请切换到该身份后再核销`
+        `凭证 #${tokenId} 的签发者 ${onChainProvider} 不是本后端托管的服务商 Agent，无法代签核销`
       );
     }
+
+    console.log(`[redeem] #${tokenId} 自动匹配签发身份 → ${AGENT_NAMES[which]} (${which})`);
+    const wallet = agentWallet(which);
 
     const hash = await wallet.writeContract({
       address: voucher,
@@ -301,7 +312,12 @@ export async function redeemVoucher(
       detail.status = "Redeemed";
       vouchers.set(tokenId, detail);
     }
-    return { txHash: hash, status: "Redeemed" };
+    return {
+      txHash: hash,
+      status: "Redeemed",
+      provider: onChainProvider,
+      providerName: AGENT_NAMES[which],
+    };
   }
 
   // 未部署：只改进程内状态，UI 上标注为演示
@@ -309,7 +325,11 @@ export async function redeemVoucher(
     detail.status = "Redeemed";
     vouchers.set(tokenId, detail);
   }
-  return { status: "Redeemed" };
+  return {
+    status: "Redeemed",
+    provider: detail?.provider,
+    providerName: detail?.providerName ?? nameOfAgent(detail?.provider ?? ""),
+  };
 }
 
 export function buildMetadata(input: {
