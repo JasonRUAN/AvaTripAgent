@@ -111,6 +111,8 @@ contract Deploy is Script {
         vm.serializeAddress(json, "tripSettlement", settlement);
         vm.serializeAddress(json, "travelVoucher", voucher);
         vm.serializeAddress(json, "orchestrator", orchestrator);
+        // 前端用它判断是否切出「演示模式」，缺失会导致部署后仍走模拟流程
+        vm.serializeBool(json, "deployed", true);
 
         string memory agents = "agents";
         vm.serializeAddress(agents, "flight", flightAgent);
