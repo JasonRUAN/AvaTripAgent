@@ -126,7 +126,7 @@ export async function runPlan(params: {
     outline = await chatJson<Outline>({
       system: OUTLINE_SYSTEM,
       user: outlineUser(request, compressOffers(offers)),
-      maxTokens: 1600,
+      maxTokens: 4000,
       timeoutMs: 45_000,
     });
     const coerced = coerceOutline(outline);

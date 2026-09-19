@@ -62,7 +62,8 @@ export async function searchFlights(
   const to = city.airports[0]!;
   const factor = TIER_FACTOR[tierOf(request)];
 
-  const base = 2380 * (city.flightMinutes / 195) * factor;
+  // 单程基准价：往返 2 人 ≈ $1190 × 2 段 × 2 人 ≈ $4760，与设计文档的演示脚本对齐
+  const base = 1190 * (city.flightMinutes / 195) * factor;
   const depart = `${String(8 + Math.floor(rng() * 10)).padStart(2, "0")}:${
     ["05", "15", "25", "40", "55"][Math.floor(rng() * 5)]!
   }`;

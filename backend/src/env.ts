@@ -36,6 +36,12 @@ export const env = {
   OPENAI_MODEL: process.env.OPENAI_MODEL ?? "gpt-4.1-mini",
   OPENAI_TIMEOUT_MS: Number(process.env.OPENAI_TIMEOUT_MS ?? 60_000),
   OPENAI_TEMPERATURE: Number(process.env.OPENAI_TEMPERATURE ?? 0.2),
+  /**
+   * 推理强度：minimal/low/medium/high。
+   * 推理模型（如 deepseek-v4.1-flash）会把输出额度消耗在 thinking 上，
+   * max_tokens 给小了就会返回空 content —— 默认 minimal 关闭思考。
+   */
+  OPENAI_REASONING_EFFORT: process.env.OPENAI_REASONING_EFFORT ?? "minimal",
   /** 逐日展开的并发路数 */
   SYNTH_DAY_CONCURRENCY: Number(process.env.SYNTH_DAY_CONCURRENCY ?? 4),
 

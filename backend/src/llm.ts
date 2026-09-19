@@ -91,6 +91,9 @@ export async function chatComplete(options: ChatOptions): Promise<string> {
         model: env.OPENAI_MODEL,
         temperature: options.temperature ?? env.OPENAI_TEMPERATURE,
         max_tokens: options.maxTokens ?? 3000,
+        ...(env.OPENAI_REASONING_EFFORT
+          ? { reasoning_effort: env.OPENAI_REASONING_EFFORT }
+          : {}),
         ...(options.json ? { response_format: { type: "json_object" } } : {}),
         messages: [
           { role: "system", content: options.system },
@@ -188,6 +191,17 @@ export async function* chatStream(
 
 /** 一次性拿到 JSON 对象（内部做围栏剥离与截断修复） */
 export async function chatJson<T>(options: ChatOptions): Promise<T> {
-  const raw = await chatComplete({ ...options, json: true });
-  return extractJson(raw) as T;
+  try {
+    const raw = await chatComplete({ ...options, json: true });
+    return extractJson(raw) as T;
+  } catch (error) {
+    // 推理模型可能在第一轮把额度耗在思考上导致空内容：放宽额度再试一次
+    console.error("[llm] 首次调用失败，放宽 max_tokens 重试:", error);
+    const raw = await chatComplete({
+      ...options,
+      json: false,
+      maxTokens: (options.maxTokens ?? 3000) * 2,
+    });
+    return extractJson(raw) as T;
+  }
 }
