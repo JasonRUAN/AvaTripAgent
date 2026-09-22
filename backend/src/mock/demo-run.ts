@@ -237,8 +237,10 @@ export function buildQuote(params: {
 
   const usedAttractions = new Set<string>();
   const usedDining = new Set<string>();
+  const usedHotels = new Set<string>();
   for (const day of days) {
     for (const item of day.items) {
+      if (item.category === 1 && item.offerId) usedHotels.add(item.offerId);
       if (item.category === 2 && item.offerId) usedAttractions.add(item.offerId);
       if (item.category === 3 && item.offerId) usedDining.add(item.offerId);
     }
@@ -275,8 +277,9 @@ export function buildQuote(params: {
     );
   }
 
-  // 酒店：每家酒店一条（多段住宿可发多张）
+  // 酒店：只结算行程里真正入住的那家（候选里没被选中的不计费；多段住宿可发多张）
   for (const hotel of offers.hotels) {
+    if (!usedHotels.has(hotel.id)) continue;
     push(
       1,
       hotel.id,

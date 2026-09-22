@@ -89,7 +89,7 @@ export function HotelCards({ items }: { items: HotelOffer[] }) {
           icon="🏨"
           title={item.name}
           subtitle={`${item.area} · ${"★".repeat(item.stars)}`}
-          badge={`${item.nights} 晚`}
+          badge={`备选 ${item.nights} 晚`}
         >
           <Row label="房型" value={item.roomType} />
           <Row label="入住" value={item.checkIn} />
@@ -154,7 +154,7 @@ export function OfferSection({
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <h3 className="text-xs font-bold tracking-wide text-ink-500">{title}</h3>
-        <DemoBadge tone="soft" label="演示库存" />
+        <DemoBadge tone="soft" label="演示数据" />
       </div>
       {children}
     </div>

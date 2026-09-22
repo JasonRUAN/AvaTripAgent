@@ -1,5 +1,5 @@
 import { env, hasLLM } from "../env";
-import { chatJson, chatStream } from "../llm";
+import { chatJson } from "../llm";
 import {
   compressOffers,
   searchAttractions,
@@ -66,7 +66,14 @@ export async function runPlan(params: {
         temperature: 0,
         timeoutMs: 25_000,
       });
-      request = { ...request, ...extracted, rawText: request.rawText };
+      // startDate 特殊处理：原文没写日期时模型只能凭空编一个（会把表单里
+      // 用户选好的「出发日期」冲掉），所以只有原文确实提到日期才采纳模型结果。
+      request = {
+        ...request,
+        ...extracted,
+        startDate: dateFromText(request.rawText, request.startDate) ?? request.startDate,
+        rawText: request.rawText,
+      };
     } catch (error) {
       console.error("[planner] 需求解析失败，沿用前端传入参数:", error);
     }
@@ -85,7 +92,7 @@ export async function runPlan(params: {
       ? `偏好是「${request.preferences.join("、")}」，我会据此调整节奏与餐食标准。`
       : "我会按舒适档位安排，兼顾通勤成本与餐食质量。");
 
-  await emitDelta(emit, summary, true);
+  await emitDelta(emit, summary);
 
   // ② 询价 ----------------------------------------------------------------
   emit({ type: "agent.status", phase: "sourcing", label: "正在向 4 家服务商 Agent 询价…" });
@@ -175,7 +182,7 @@ export async function runPlan(params: {
       `${skeleton.theme}：${priced.items.map((item) => `${item.time} ${item.title}`).join("；")}。` +
       (skeleton.tips ? ` ${skeleton.tips}` : "");
 
-    await emitDelta(emit, narrative ?? fallbackText, false, position * 120);
+    await emitDelta(emit, narrative ?? fallbackText, position * 120);
 
     emit({ type: "day.done", index: skeleton.index, day: priced });
     return priced;
@@ -207,6 +214,47 @@ export async function runPlan(params: {
   return { request, days, quote, degraded };
 }
 
+/**
+ * 从自然语言里认出用户**明确写出**的出发日期，支持
+ * `2026-10-01`、`2026/10/1`、`2026.10.1`、`2026年10月1日`、`10月1日`、`10/1`。
+ *
+ * 认不出来就返回 null：调用方应沿用表单里选定的日期，
+ * 而不是采信模型编造的「一个合理的未来日期」。
+ */
+export function dateFromText(text: string, baseDate: string): string | null {
+  const full = text.match(/(\d{4})\s*[-/.年]\s*(\d{1,2})\s*[-/.月]\s*(\d{1,2})\s*[日号]?/);
+  if (full) {
+    const iso = toIsoDate(Number(full[1]), Number(full[2]), Number(full[3]));
+    if (iso) return iso;
+  }
+
+  const year = Number(baseDate.slice(0, 4)) || new Date().getFullYear();
+
+  const monthDay = text.match(/(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/);
+  if (monthDay) {
+    const iso = toIsoDate(year, Number(monthDay[1]), Number(monthDay[2]));
+    if (iso) return iso;
+  }
+
+  // 纯数字简写（10/1、10-1）放在最后，避免误伤价格、时长里的数字组合
+  const short = text.match(/(?:^|[^\d])(\d{1,2})\s*[/-]\s*(\d{1,2})(?![\d])/);
+  if (short) {
+    const iso = toIsoDate(year, Number(short[1]), Number(short[2]));
+    if (iso) return iso;
+  }
+
+  return null;
+}
+
+function toIsoDate(year: number, month: number, day: number): string | null {
+  if (year < 2000 || year > 2100) return null;
+  if (month < 1 || month > 12) return null;
+  if (day < 1 || day > 31) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return date.toISOString().slice(0, 10);
+}
+
 /** 单日叙述：流式吐出，失败由调用方降级 */
 async function dayNarrative(
   request: TripRequest,
@@ -227,36 +275,19 @@ async function dayNarrative(
   return text || null;
 }
 
-/** 以打字机节奏把文本切成 delta 事件 */
-async function emitDelta(
-  emit: Emit,
-  text: string,
-  stream: boolean,
-  startDelayMs = 0
-): Promise<void> {
+/**
+ * 以打字机节奏流式吐出确认文本。
+ *
+ * 注意：这里不再调用 LLM 重新生成——确认语已是编排好的自然语言，
+ * 让模型转述只会引入不可控内容（曾把解析结果 JSON 原样流给用户）。
+ */
+async function emitDelta(emit: Emit, text: string, startDelayMs = 0): Promise<void> {
   if (startDelayMs > 0) await sleep(startDelayMs);
 
-  if (!stream) {
-    const chunks = text.match(/[\s\S]{1,12}/g) ?? [];
-    for (const chunk of chunks) {
-      emit({ type: "agent.delta", text: chunk });
-      await sleep(18);
-    }
-    return;
-  }
-
-  // 理解阶段优先走真实流式；失败则退化为分块
-  try {
-    for await (const delta of chatStream({ system: PARSE_SYSTEM, user: text, maxTokens: 300 })) {
-      emit({ type: "agent.delta", text: delta });
-    }
-    return;
-  } catch {
-    const chunks = text.match(/[\s\S]{1,12}/g) ?? [];
-    for (const chunk of chunks) {
-      emit({ type: "agent.delta", text: chunk });
-      await sleep(18);
-    }
+  const chunks = text.match(/[\s\S]{1,12}/g) ?? [];
+  for (const chunk of chunks) {
+    emit({ type: "agent.delta", text: chunk });
+    await sleep(18);
   }
 }
 

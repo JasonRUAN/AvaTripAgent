@@ -212,7 +212,7 @@ export function AgentStream({ state }: { state: RunState }) {
       ) : null}
 
       {state.offers.hotels.length > 0 ? (
-        <OfferSection title="酒店候选">
+        <OfferSection title="酒店候选（三选一，行程只入住 1 家）">
           <HotelCards items={state.offers.hotels} />
         </OfferSection>
       ) : null}

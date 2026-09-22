@@ -13,6 +13,7 @@ import {
   addDays,
   addMinutes,
   type CityCatalog,
+  type DiningSeed,
 } from "./catalog";
 import {
   TIER_FACTOR,
@@ -43,10 +44,6 @@ function tierOf(request: TripRequest): Tier {
   return resolveTier(request.budget, request.days, request.pax);
 }
 
-function round(n: number): number {
-  return Math.round(n * 100) / 100;
-}
-
 // ------------------------------------------------------------------ 航班
 
 export async function searchFlights(
@@ -62,8 +59,9 @@ export async function searchFlights(
   const to = city.airports[0]!;
   const factor = TIER_FACTOR[tierOf(request)];
 
-  // 单程基准价：往返 2 人 ≈ $1190 × 2 段 × 2 人 ≈ $4760，与设计文档的演示脚本对齐
-  const base = 1190 * (city.flightMinutes / 195) * factor;
+  // 单程基准价：东京(195min) 经济舱 ≈ $180（往返 ≈ ¥2600），按飞行时长线性缩放
+  // 例：深圳→新加坡(335min) 经济舱单程 ≈ $310，往返 ≈ ¥4400，符合真实市场价
+  const base = 180 * (city.flightMinutes / 195) * factor;
   const depart = `${String(8 + Math.floor(rng() * 10)).padStart(2, "0")}:${
     ["05", "15", "25", "40", "55"][Math.floor(rng() * 5)]!
   }`;
@@ -84,7 +82,7 @@ export async function searchFlights(
     durationMinutes: city.flightMinutes,
     cabin: factor >= 1.8 ? "商务舱" : "经济舱",
     seatsLeft: 2 + Math.floor(rng() * 9),
-    pricePerPerson: round(jitter(rng, base)),
+    pricePerPerson: Math.round(jitter(rng, base)),
     currency: "USD",
     provider: AGENT_ADDRESSES.flight,
   };
@@ -99,7 +97,7 @@ export async function searchFlights(
     departAt: `${endDate} ${returnDepart}`,
     arriveAt: `${endDate} ${addMinutes(returnDepart, city.flightMinutes + 10)}`,
     durationMinutes: city.flightMinutes + 10,
-    pricePerPerson: round(jitter(rng, base)),
+    pricePerPerson: Math.round(jitter(rng, base)),
     provider: AGENT_ADDRESSES.flight,
   };
 
@@ -107,6 +105,18 @@ export async function searchFlights(
 }
 
 // ------------------------------------------------------------------ 酒店
+
+/**
+ * 档位 → 目标星级。
+ *
+ * 预算档位影响「选哪些酒店」，而不是把同一家酒店的价格整体放大/缩小——
+ * 真实市场里莱佛士的房价不会因为游客预算低就打三折。
+ */
+function tierStarRange(tier: Tier): [number, number] {
+  if (tier === "luxury") return [5, 5];
+  if (tier === "economy") return [3, 4];
+  return [4, 5];
+}
 
 export async function searchHotels(
   request: TripRequest,
@@ -118,11 +128,15 @@ export async function searchHotels(
   const rng = createRng(`${tripId}:hotels:body`);
   const city = cityOf(request.destination);
   const nights = Math.max(1, request.days - 1);
-  const factor = TIER_FACTOR[tierOf(request)];
+  const [minStar, maxStar] = tierStarRange(tierOf(request));
   const endDate = addDays(request.startDate, request.days - 1);
 
-  const items = pick(rng, city.hotels, 3).map<HotelOffer>((seed) => {
-    const pricePerNight = round(jitter(rng, seed.basePrice * factor));
+  // 优先在档次匹配的子集里挑，候选不足时退回全量
+  const matched = city.hotels.filter((h) => h.stars >= minStar && h.stars <= maxStar);
+  const pool = matched.length >= 3 ? matched : city.hotels;
+
+  const items = pick(rng, pool, 3).map<HotelOffer>((seed) => {
+    const pricePerNight = Math.round(jitter(rng, seed.basePrice));
     return {
       id: seed.id,
       name: seed.name,
@@ -135,7 +149,7 @@ export async function searchHotels(
       rooms: request.rooms,
       nights,
       pricePerNight,
-      total: round(pricePerNight * nights * request.rooms),
+      total: pricePerNight * nights * request.rooms,
       provider: AGENT_ADDRESSES.hotel,
     };
   });
@@ -162,7 +176,7 @@ export async function searchAttractions(
     durationMinutes: seed.durationMinutes,
     openHours: seed.openHours,
     needBooking: seed.needBooking,
-    pricePerPerson: round(jitter(rng, seed.basePrice, 0.05)),
+    pricePerPerson: Math.round(jitter(rng, seed.basePrice, 0.05)),
     provider: AGENT_ADDRESSES.attraction,
   }));
 
@@ -170,6 +184,15 @@ export async function searchAttractions(
 }
 
 // ------------------------------------------------------------------ 餐厅
+
+/** 档位 → 候选价位带（按人均价排序后取半） */
+function tierDiningPool(tier: Tier, list: readonly DiningSeed[]): readonly DiningSeed[] {
+  const sorted = [...list].sort((a, b) => a.basePrice - b.basePrice);
+  const half = Math.max(3, Math.ceil(sorted.length / 2));
+  if (tier === "economy") return sorted.slice(0, half);
+  if (tier === "luxury") return sorted.slice(-half);
+  return sorted;
+}
 
 export async function searchRestaurants(
   request: TripRequest,
@@ -180,17 +203,21 @@ export async function searchRestaurants(
 
   const rng = createRng(`${tripId}:restaurants:body`);
   const city = cityOf(request.destination);
-  const factor = TIER_FACTOR[tierOf(request)];
+  const tier = tierOf(request);
 
-  const items = pick(rng, city.restaurants, 5).map<DiningOffer>((seed) => ({
-    id: seed.id,
-    name: seed.name,
-    area: seed.area,
-    cuisine: seed.cuisine,
-    durationMinutes: seed.durationMinutes,
-    pricePerPerson: round(jitter(rng, seed.basePrice * factor)),
-    provider: AGENT_ADDRESSES.dining,
-  }));
+  // 档位决定「去什么价位带吃饭」：经济档吃平价、奢华档吃精致 dining。
+  // 人均价不再乘档位系数——海南鸡饭不会因为游客有钱就卖到 $21。
+  const items = pick(rng, tierDiningPool(tier, city.restaurants), 5).map<DiningOffer>(
+    (seed) => ({
+      id: seed.id,
+      name: seed.name,
+      area: seed.area,
+      cuisine: seed.cuisine,
+      durationMinutes: seed.durationMinutes,
+      pricePerPerson: Math.round(jitter(rng, seed.basePrice)),
+      provider: AGENT_ADDRESSES.dining,
+    })
+  );
 
   return { items, ms };
 }
