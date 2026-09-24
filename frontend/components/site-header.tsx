@@ -6,8 +6,10 @@ import { WalletButton } from "./wallet-button";
 
 const NAV = [
   { href: "/", label: "规划行程" },
+  { href: "/agents", label: "服务商" },
   { href: "/vouchers", label: "我的凭证" },
   { href: "/merchant", label: "商户核销" },
+  { href: "/admin", label: "管理" },
 ];
 
 export function SiteHeader() {

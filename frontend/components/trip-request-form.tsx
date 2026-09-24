@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { DemoDisclaimer } from "./demo-badge";
-import { DEFAULT_TRIP_REQUEST, type TripRequest } from "@/lib/types";
+import { DEFAULT_TRIP_REQUEST, AGENT_KEYS, AGENT_KEY_LABEL, agentCovers, KEY_TO_CATEGORY, type AgentKey, type ProviderSelection, type TripRequest } from "@/lib/types";
+import { readStoredProviders, writeStoredProviders } from "@/lib/provider-selection";
+import { useAgents } from "@/hooks/use-agents";
 
 const EXAMPLES = [
   "上海去东京 5 天、两人、预算 8000、想吃好少走路",
@@ -95,12 +97,42 @@ export function TripRequestForm({
   running,
   initialRequest,
 }: {
-  onSubmit: (request: TripRequest) => void;
+  onSubmit: (request: TripRequest, providers: ProviderSelection) => void;
   running: boolean;
-  /** 切换分类页回来时恢复上一次填写/提交的需求 */
   initialRequest?: TripRequest;
 }) {
   const [request, setRequest] = useState<TripRequest>(initialRequest ?? DEFAULT_TRIP_REQUEST);
+  const [autoHigh, setAutoHigh] = useState(true);
+  const [manual, setManual] = useState<ProviderSelection>({});
+  const { agents } = useAgents();
+
+  useEffect(() => {
+    const stored = readStoredProviders();
+    if (Object.keys(stored).length > 0) {
+      setAutoHigh(false);
+      setManual(stored);
+    }
+  }, []);
+
+  const defaults = useMemo(() => {
+    const next: ProviderSelection = {};
+    for (const key of AGENT_KEYS) {
+      const listed = agents
+        .filter((agent) => agent.active && agentCovers(agent, KEY_TO_CATEGORY[key]))
+        .sort((a, b) => b.ratingAvgX100 - a.ratingAvgX100 || b.ratingCount - a.ratingCount);
+      if (listed[0]) next[key] = listed[0].address;
+    }
+    return next;
+  }, [agents]);
+
+  const selected: ProviderSelection = autoHigh ? defaults : { ...defaults, ...readStoredProviders(), ...manual };
+
+  const patchProvider = (key: AgentKey, address: string) => {
+    setAutoHigh(false);
+    const next = { ...selected, [key]: address as `0x${string}` };
+    setManual(next);
+    writeStoredProviders(next);
+  };
 
   const patch = (next: Partial<TripRequest>) =>
     setRequest((prev) => ({ ...prev, ...next }));
@@ -252,10 +284,55 @@ export function TripRequestForm({
         </div>
       </div>
 
+      <div className="rounded-2xl border border-brand-100 bg-white/70 p-4">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <p className="text-xs font-bold tracking-wide text-ink-300">询价服务商</p>
+          <label className="flex items-center gap-1.5 text-[11px] font-semibold text-ink-500">
+            <input
+              type="checkbox"
+              checked={autoHigh}
+              onChange={(event) => {
+                setAutoHigh(event.target.checked);
+                if (event.target.checked) setManual({});
+              }}
+            />
+            自动选高分
+          </label>
+        </div>
+        <div className="grid grid-cols-1 gap-2">
+          {AGENT_KEYS.map((key) => {
+            const listed = agents.filter(
+              (agent) => agent.active && agentCovers(agent, KEY_TO_CATEGORY[key])
+            );
+            const value = selected[key] ?? "";
+            return (
+              <Field key={key} label={AGENT_KEY_LABEL[key]}>
+                <select
+                  className={inputClass}
+                  value={value}
+                  disabled={listed.length === 0}
+                  onChange={(event) => patchProvider(key, event.target.value)}
+                >
+                  {listed.length === 0 ? (
+                    <option value="">暂无已注册 Agent</option>
+                  ) : (
+                    listed.map((agent) => (
+                      <option key={agent.address} value={agent.address}>
+                        {agent.name} · {agent.ratingCount ? `★${agent.ratingAvg.toFixed(1)} (${agent.ratingCount})` : "暂无评分"}
+                      </option>
+                    ))
+                  )}
+                </select>
+              </Field>
+            );
+          })}
+        </div>
+      </div>
+
       <button
         type="button"
         disabled={running}
-        onClick={() => onSubmit(request)}
+        onClick={() => onSubmit(request, selected)}
         className="sky-gradient flex h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-2xl text-base font-bold text-white shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
       >
         {running ? "Agent 规划中…" : "开始规划 ✈"}

@@ -19,7 +19,11 @@ export const wagmiConfig = createConfig({
   chains: [avalancheFuji],
   connectors: [metaMask(), injected()],
   transports: {
-    [avalancheFuji.id]: http(FUJI_RPC),
+    [avalancheFuji.id]: http(FUJI_RPC, {
+      timeout: 12_000,
+      retryCount: 1,
+      retryDelay: 400,
+    }),
   },
   storage: createStorage({ storage: cookieStorage, key: "avatrip.wagmi" }),
   ssr: true,

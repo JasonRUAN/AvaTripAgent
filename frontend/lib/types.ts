@@ -291,3 +291,87 @@ export interface VoucherMetadata {
   /** 各品类的结构化明细 */
   details: Record<string, string>;
 }
+
+export type AgentKey = "flight" | "hotel" | "attraction" | "dining";
+
+export const AGENT_KEYS: AgentKey[] = ["flight", "hotel", "attraction", "dining"];
+
+export const AGENT_KEY_LABEL: Record<AgentKey, string> = {
+  flight: "机票",
+  hotel: "酒店",
+  attraction: "门票",
+  dining: "餐饮",
+};
+
+export const CATEGORY_TO_KEY: Record<CategoryCode, AgentKey> = {
+  0: "flight",
+  1: "hotel",
+  2: "attraction",
+  3: "dining",
+};
+
+export const KEY_TO_CATEGORY: Record<AgentKey, CategoryCode> = {
+  flight: 0,
+  hotel: 1,
+  attraction: 2,
+  dining: 3,
+};
+
+export const ALL_CATEGORIES: CategoryCode[] = [0, 1, 2, 3];
+
+export function categoriesFromMask(mask: number): CategoryCode[] {
+  return ALL_CATEGORIES.filter((code) => (mask & (1 << code)) !== 0);
+}
+
+export function maskFromCategories(categories: CategoryCode[]): number {
+  let mask = 0;
+  for (const code of categories) mask |= 1 << code;
+  return mask;
+}
+
+export function agentCovers(agent: { category: CategoryCode; categories?: CategoryCode[] }, code: CategoryCode): boolean {
+  const listed = agent.categories?.length ? agent.categories : [agent.category];
+  return listed.includes(code);
+}
+
+export function categoryLabels(agent: { category: CategoryCode; categories?: CategoryCode[] }): string {
+  const listed = agent.categories?.length ? agent.categories : [agent.category];
+  return listed.map((code) => CATEGORY_LABEL[code]).join(" · ");
+}
+
+export type ProviderSelection = Partial<Record<AgentKey, Address>>;
+
+export interface AgentProfile {
+  address: Address;
+  name: string;
+  category: CategoryCode;
+  /** 综合型服务商可同时覆盖多个分类 */
+  categories: CategoryCode[];
+  categoryMask: number;
+  endpoint: string;
+  active: boolean;
+  ratingAvg: number;
+  ratingCount: number;
+  ratingAvgX100: number;
+  /** 服务商简介，可为空 */
+  description: string;
+  /** 官网链接，可为空 */
+  website: string;
+}
+
+export const CATEGORY_ICON: Record<CategoryCode, string> = {
+  0: "✈",
+  1: "🏨",
+  2: "🎫",
+  3: "🍽",
+};
+
+export interface OnchainReview {
+  tokenId: string;
+  reviewer: Address;
+  provider: Address;
+  score: number;
+  comment: string;
+  timestamp: number;
+}
+

@@ -5,8 +5,8 @@ import type { Address } from "./types";
 /**
  * 合约地址与 ABI。
  *
- * 地址来自 `deployments/fuji.json`（由 `forge script script/Deploy.s.sol` 生成，
- * 仓库内 `frontend/deployments/` 是同一份副本，供前端导入）。
+ * 地址来自仓库根 `deployments/fuji.json`（`forge script` 写入）。
+ * `frontend/deployments/` 是同步副本（`scripts/sync-fuji-deployment.sh` / `npm run predev`）。
  * 前端只持有公开地址，**任何私钥都不会进入前端**。
  */
 
@@ -18,6 +18,8 @@ export const CONTRACTS = {
   agentRegistry: deployment.agentRegistry as Address,
   tripSettlement: deployment.tripSettlement as Address,
   travelVoucher: deployment.travelVoucher as Address,
+  agentReview: ((deployment as { agentReview?: string }).agentReview ??
+    "0x0000000000000000000000000000000000000000") as Address,
   orchestrator: deployment.orchestrator as Address,
   agents: {
     flight: deployment.agents.flight as Address,
@@ -36,9 +38,12 @@ export const isDeployed =
   CONTRACTS.tripSettlement !== ZERO &&
   CONTRACTS.travelVoucher !== ZERO;
 
+export const isReviewDeployed =
+  isDeployed && CONTRACTS.agentReview !== ZERO;
+
 /** 后端地址，SSE / REST 都走它 */
 export const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:3001";
+  process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:3010";
 
 // ---------------------------------------------------------------------- ABI
 
@@ -94,7 +99,37 @@ export const VOUCHER_ABI = parseAbi([
 ]);
 
 export const REGISTRY_ABI = parseAbi([
+  "function owner() view returns (address)",
   "function isActiveAgent(address agent) view returns (bool)",
-  "function getAgent(address agent) view returns (string name, uint8 category, string endpoint, bool active)",
+  "function getAgent(address agent) view returns ((string name, uint8 category, string endpoint, bool active, string description, string website))",
+  "function getCategoryMask(address agent) view returns (uint8)",
   "function getAgents() view returns (address[])",
+  "function getAgentsByCategory(uint8 category) view returns (address[])",
+  "function getAgentsByCategoryActive(uint8 category) view returns (address[])",
+  "function registerAgent(address agent, string name, uint8 categoryMask, string endpoint, string description, string website)",
+  "function setActive(address agent, bool active)",
+  "event AgentRegistered(address indexed agent, string name, uint8 categoryMask, string endpoint, string description, string website)",
+  "event AgentStatusChanged(address indexed agent, bool active)",
+  "error NotOwner()",
+  "error ZeroAddress()",
+  "error EmptyName()",
+  "error EmptyCategories()",
+  "error InvalidCategories()",
 ]);
+
+export const REVIEW_ABI = parseAbi([
+  "function submitReview(uint256 tokenId, uint8 score, string comment)",
+  "function getReview(uint256 tokenId) view returns ((uint256 tokenId, address reviewer, address provider, uint8 score, string comment, uint64 timestamp))",
+  "function hasReview(uint256 tokenId) view returns (bool)",
+  "function getReviewsByAgent(address agent) view returns ((uint256 tokenId, address reviewer, address provider, uint8 score, string comment, uint64 timestamp)[])",
+  "function getScore(address agent) view returns (uint256 sum, uint256 count, uint256 avgX100)",
+  "event ReviewSubmitted(uint256 indexed tokenId, address indexed reviewer, address indexed provider, uint8 score, string comment)",
+  "error UnknownVoucher()",
+  "error NotHolder()",
+  "error VoucherNotRedeemed()",
+  "error AlreadyReviewed(uint256 tokenId)",
+  "error InvalidScore()",
+  "error CommentTooLong()",
+  "error InactiveProvider(address provider)",
+]);
+

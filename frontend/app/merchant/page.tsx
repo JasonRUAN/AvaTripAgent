@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { DemoBadge } from "@/components/demo-badge";
 import { VoucherCard } from "@/components/voucher-card";
 import { BACKEND_URL } from "@/lib/contracts";
@@ -140,6 +141,11 @@ export default function MerchantPage() {
             >
               {message}
             </p>
+          ) : null}
+          {detail?.status === "Redeemed" ? (
+            <Link href="/vouchers" className="text-xs font-bold text-brand-700 hover:underline">
+              去评价这张凭证 →
+            </Link>
           ) : null}
 
           <div className="flex items-center gap-2">

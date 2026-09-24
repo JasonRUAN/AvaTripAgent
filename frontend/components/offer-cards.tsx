@@ -1,6 +1,7 @@
 "use client";
 
 import { DemoBadge } from "./demo-badge";
+import { AgentScoreBadge } from "./voucher-review";
 import { formatDuration } from "@/lib/format";
 import type {
   AttractionOffer,
@@ -73,6 +74,9 @@ export function FlightCards({ items }: { items: FlightOffer[] }) {
             label="票价"
             value={`$${item.pricePerPerson} / 人 · 余 ${item.seatsLeft}`}
           />
+          <div className="mt-2">
+            <AgentScoreBadge address={item.provider} />
+          </div>
         </CardShell>
       ))}
     </div>
@@ -95,6 +99,9 @@ export function HotelCards({ items }: { items: HotelOffer[] }) {
           <Row label="入住" value={item.checkIn} />
           <Row label="退房" value={item.checkOut} />
           <Row label="总价" value={`$${item.total}（$${item.pricePerNight}/晚）`} />
+          <div className="mt-2">
+            <AgentScoreBadge address={item.provider} />
+          </div>
         </CardShell>
       ))}
     </div>
@@ -118,6 +125,9 @@ export function AttractionCards({ items }: { items: AttractionOffer[] }) {
             label="票价"
             value={item.pricePerPerson === 0 ? "免费" : `$${item.pricePerPerson} / 人`}
           />
+          <div className="mt-2">
+            <AgentScoreBadge address={item.provider} />
+          </div>
         </CardShell>
       ))}
     </div>
@@ -137,6 +147,9 @@ export function DiningCards({ items }: { items: DiningOffer[] }) {
         >
           <Row label="用时" value={formatDuration(item.durationMinutes)} />
           <Row label="人均" value={`$${item.pricePerPerson}`} />
+          <div className="mt-2">
+            <AgentScoreBadge address={item.provider} />
+          </div>
         </CardShell>
       ))}
     </div>

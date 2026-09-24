@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAccount, usePublicClient } from "wagmi";
-import { fetchHolderVouchers } from "@/lib/chain-vouchers";
+import { enrichVoucherMetadata, fetchHolderVouchers } from "@/lib/chain-vouchers";
 import { isDeployed } from "@/lib/contracts";
 import { formatDate } from "@/lib/format";
 import type { CategoryCode, VoucherDetail } from "@/lib/types";
@@ -40,6 +40,8 @@ function tripTitle(group: VoucherDetail[], orderId: string): string {
 export function useVouchers() {
   const { address } = useAccount();
   const client = usePublicClient();
+  const clientRef = useRef(client);
+  clientRef.current = client;
 
   const [fetched, setFetched] = useState<VoucherDetail[]>([]);
   const [loading, setLoading] = useState(false);
@@ -49,8 +51,13 @@ export function useVouchers() {
   // 未连接钱包时直接推导为空列表，避免在 effect 里同步 setState
   const items = address ? fetched : EMPTY;
 
+  // 只跟「有没有 client」走，不跟 client 对象引用走。
+  // wagmi 的 usePublicClient() 经常换新实例，跟进引用会反复取消请求、一直「读取中」。
+  const hasClient = Boolean(client);
+
   useEffect(() => {
-    if (!address || !client) return;
+    const publicClient = clientRef.current;
+    if (!address || !publicClient) return;
 
     let cancelled = false;
 
@@ -69,24 +76,28 @@ export function useVouchers() {
       setError(null);
 
       try {
-        const list = await fetchHolderVouchers(client, address);
+        const list = await fetchHolderVouchers(publicClient, address);
         if (cancelled) return;
         setFetched(list);
+        setLoading(false);
+
+        // 链下明细后补：失败/超时不影响已经画出的卡片
+        const enriched = await enrichVoucherMetadata(list);
+        if (!cancelled) setFetched(enriched);
       } catch (cause) {
         if (cancelled) return;
         setFetched(EMPTY);
         setError(
           cause instanceof Error ? cause.message : "链上凭证读取失败，请稍后重试"
         );
-      } finally {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       }
     });
 
     return () => {
       cancelled = true;
     };
-  }, [address, client, reloadKey]);
+  }, [address, hasClient, reloadKey]);
 
   const refresh = useCallback(() => setReloadKey((key) => key + 1), []);
 

@@ -5,15 +5,15 @@ import { AgentStream } from "@/components/agent-stream";
 import { QuotePanel } from "@/components/quote-panel";
 import { TripRequestForm } from "@/components/trip-request-form";
 import { usePlanRun } from "@/hooks/use-plan-run";
-import type { TripRequest } from "@/lib/types";
+import type { ProviderSelection, TripRequest } from "@/lib/types";
 
 export default function WorkbenchPage() {
   const { state, lastRequest, start, reset } = usePlanRun();
   const [request, setRequest] = useState<TripRequest | null>(lastRequest);
 
-  const handleSubmit = (next: TripRequest) => {
+  const handleSubmit = (next: TripRequest, providers: ProviderSelection) => {
     setRequest(next);
-    void start(next);
+    void start(next, providers);
   };
 
   return (

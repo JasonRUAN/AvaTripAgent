@@ -3,6 +3,7 @@
 import { useCallback, useSyncExternalStore } from "react";
 import QRCode from "react-qr-code";
 import { DemoBadge } from "./demo-badge";
+import { VoucherReviewPanel } from "./voucher-review";
 import { CONTRACTS } from "@/lib/contracts";
 import { explorerToken, formatDate, maskAddress } from "@/lib/format";
 import type { VoucherDetail } from "@/lib/types";
@@ -138,6 +139,9 @@ export function VoucherCard({
         >
           在 Explorer 查看 ↗
         </a>
+      </div>
+      <div className="px-4 pb-3">
+        <VoucherReviewPanel voucher={voucher} />
       </div>
 
       {redeemed ? (

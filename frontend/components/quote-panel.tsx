@@ -60,7 +60,7 @@ export function QuotePanel({
 
         <ul className="flex flex-col divide-y divide-brand-50">
           {quote.lineItems.map((item) => (
-            <li key={`${item.category}-${item.provider}`} className="flex items-center gap-2.5 py-2.5">
+            <li key={item.itemHash} className="flex items-center gap-2.5 py-2.5">
               <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand-50 text-sm">
                 {CATEGORY_ICON[item.category] ?? "•"}
               </span>

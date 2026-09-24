@@ -22,6 +22,7 @@ import type {
   StreamEvent,
   ToolName,
   TripRequest,
+  ProviderSelection,
 } from "@/lib/types";
 
 export interface ToolCall {
@@ -94,24 +95,24 @@ interface PlanStore {
   state: RunState;
   /** 最近一次提交的行程需求，用于切页后恢复左侧表单 */
   request: TripRequest | null;
+  providers: ProviderSelection;
 }
 
 /** SSR / hydration 阶段使用的固定快照 */
-const SERVER_STORE: PlanStore = { state: INITIAL, request: null };
+const SERVER_STORE: PlanStore = { state: INITIAL, request: null, providers: {} };
 
 let cachedStore: PlanStore | null = null;
 
 function loadStore(): PlanStore {
   if (cachedStore) return cachedStore;
-  const raw = readSession<{ state?: RunState; request?: TripRequest | null }>(PLAN_CACHE_KEY);
+  const raw = readSession<{ state?: RunState; request?: TripRequest | null; providers?: ProviderSelection }>(PLAN_CACHE_KEY);
   if (raw?.state) {
-    // 整刷后旧的 SSE 消费者已不存在，running 快照定格为 done
     const state: RunState =
       raw.state.status === "running" ? { ...raw.state, status: "done" } : raw.state;
-    cachedStore = { state, request: raw.request ?? null };
+    cachedStore = { state, request: raw.request ?? null, providers: raw.providers ?? {} };
     return cachedStore;
   }
-  cachedStore = { state: INITIAL, request: null };
+  cachedStore = { state: INITIAL, request: null, providers: {} };
   return cachedStore;
 }
 
@@ -248,19 +249,19 @@ export function usePlanRun() {
   );
 
   const start = useCallback(
-    async (request: TripRequest) => {
+    async (request: TripRequest, providers?: ProviderSelection) => {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
 
-      updateStore((prev) => ({ ...prev, request, state: { ...INITIAL, status: "running" } }));
+      updateStore((prev) => ({ ...prev, request, providers: providers ?? {}, state: { ...INITIAL, status: "running" } }));
 
       let runId: string | undefined;
       try {
         const response = await fetch(`${BACKEND_URL}/api/runs`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ request, rawText: request.rawText }),
+          body: JSON.stringify({ request, rawText: request.rawText, providers }),
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(`后端返回 ${response.status}`);
@@ -303,7 +304,7 @@ export function usePlanRun() {
   const reset = useCallback(() => {
     abortRef.current?.abort();
     clearCheckoutSnapshot();
-    updateStore(() => ({ state: INITIAL, request: null }));
+    updateStore(() => ({ state: INITIAL, request: null, providers: {} }));
     removeSession(PLAN_CACHE_KEY);
   }, []);
 
