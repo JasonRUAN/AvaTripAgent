@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # forge 必须在 foundry 项目根目录运行：.env 读取、../../deployments 相对路径都依赖它
-cd "$(dirname "$0")"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
 REQUIRED=(
     PRIVATE_KEY
@@ -26,3 +27,6 @@ if [ ${#missing[@]} -ne 0 ]; then
 fi
 
 forge script script/Deploy.s.sol:Deploy --rpc-url fuji --broadcast
+
+# forge 只写仓库根 deployments/fuji.json；前端 import 与后端 Docker 需要副本
+"$SCRIPT_DIR/../../scripts/sync-fuji-deployment.sh"
