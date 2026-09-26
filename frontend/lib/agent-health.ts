@@ -72,6 +72,7 @@ export async function probeAgentHealth(
       categories?: string[];
       category?: string;
       chain?: boolean;
+      chainConfigured?: boolean;
     };
     if (!data.ok) return { status: "error", message: health.notOk };
     return {
@@ -79,7 +80,7 @@ export async function probeAgentHealth(
       service: data.service ?? "unknown",
       address: data.address ?? "",
       categories: data.categories ?? (data.category ? [data.category] : []),
-      chain: Boolean(data.chain),
+      chain: Boolean(data.chain ?? data.chainConfigured),
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : health.probeFailed;
