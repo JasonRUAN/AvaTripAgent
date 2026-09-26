@@ -506,6 +506,7 @@ export const en: Dictionary = {
     summaryHttp: "Trip summary generation failed (HTTP {status})",
     claimFailed: "Claim failed",
     approveFailed: "Approval failed",
+    userRejected: "Wallet signature cancelled — please try again",
     backendUnreachable: "Cannot reach the agents service {url}: {msg}",
     orderRegisterFailed: "Order registration failed: HTTP {status} {detail}",
     settlementDisconnected: "Settlement progress stream disconnected ({url}): {msg}",
@@ -525,6 +526,28 @@ export const en: Dictionary = {
     nextActionDemo: "Demo mode: simulated payment & settlement",
     nextActionConnect: "Connect wallet",
     nextActionPay: "Confirm payment (approve + createOrder)",
+
+    /** Backend error codes → copy. Keys must match the `code` sent by the agents service. */
+    codes: {
+      PLAN_FAILED: "Planning failed, please try again later",
+      REGISTRY_NOT_DEPLOYED:
+        "The orchestrator has no provider registry contract configured, so the provider list is unavailable. Please contact an administrator.",
+      REGISTRY_READ_FAILED: "Failed to read the on-chain provider list, please try again later",
+      NO_REGISTERED_AGENTS:
+        "No provider Agents are registered on-chain yet. Register and activate providers in AgentRegistry, then retry.",
+      NO_PROVIDER_FOR_CATEGORY:
+        "No provider Agents are available for the selected category — pick providers again and retry",
+      PROVIDER_NOT_REGISTERED:
+        "One of the selected providers is not registered or not active — please pick providers again and retry",
+      QUOTE_MISSING: "No quote found for this order — re-plan the trip and check out again",
+      SETTLE_FAILED: "Settlement failed, please try again later",
+      VOUCHER_NOT_FOUND: "Voucher not found — it may not be issued yet",
+      REDEEM_FAILED: "Redemption failed, please try again later",
+      METADATA_NOT_FOUND: "The voucher's off-chain details are missing and cannot be shown",
+      SUMMARY_FAILED: "Failed to generate the AI trip summary, please retry later",
+      INVALID_REQUEST: "The request is missing required parameters — go back one step and retry",
+      INTERNAL_ERROR: "Service temporarily unavailable, please retry later",
+    },
   },
 
   exportDoc: {

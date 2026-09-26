@@ -497,6 +497,7 @@ export const zh = {
     summaryHttp: "行程总结生成失败（HTTP {status}）",
     claimFailed: "领取失败",
     approveFailed: "授权失败",
+    userRejected: "钱包签名已取消，请重新操作",
     backendUnreachable: "无法连接 agents 服务 {url}：{msg}",
     orderRegisterFailed: "订单登记失败：HTTP {status} {detail}",
     settlementDisconnected: "分账进度连接断开（{url}）：{msg}",
@@ -513,6 +514,31 @@ export const zh = {
     nextActionDemo: "演示模式：模拟支付并分账",
     nextActionConnect: "连接钱包",
     nextActionPay: "确认支付（approve + createOrder）",
+
+    /**
+     * 后端错误码 → 文案。
+     *
+     * key 必须与 agents 侧返回的 `code` 完全一致（run.error / settlement.error / REST 错误体），
+     * 服务端只给稳定码与技术细节，语言由前端决定，切语言无需重跑请求。
+     * 未收录的 code 会回退展示服务端 message。
+     */
+    codes: {
+      PLAN_FAILED: "规划失败，请稍后重试",
+      REGISTRY_NOT_DEPLOYED: "编排服务未配置服务商注册表合约，暂时无法获取服务商列表，请联系管理员",
+      REGISTRY_READ_FAILED: "读取链上服务商列表失败，请稍后重试",
+      NO_REGISTERED_AGENTS:
+        "链上还没有可用的服务商 Agent：请先在 AgentRegistry 注册并激活服务商后重试",
+      NO_PROVIDER_FOR_CATEGORY: "所选类别下没有可用的服务商 Agent，请重新选择服务商后重试",
+      PROVIDER_NOT_REGISTERED: "你选择的某个服务商未注册或未激活，请重新选择服务商后重试",
+      QUOTE_MISSING: "找不到该订单对应的报价单，请重新规划后再下单",
+      SETTLE_FAILED: "分账失败，请稍后重试",
+      VOUCHER_NOT_FOUND: "找不到该凭证明细，可能尚未签发",
+      REDEEM_FAILED: "核销失败，请稍后重试",
+      METADATA_NOT_FOUND: "凭证的链下明细缺失，暂时无法展示",
+      SUMMARY_FAILED: "AI 行程总结生成失败，请稍后重试",
+      INVALID_REQUEST: "请求参数不完整，请返回上一步重试",
+      INTERNAL_ERROR: "服务暂时不可用，请稍后重试",
+    },
   },
 
   exportDoc: {

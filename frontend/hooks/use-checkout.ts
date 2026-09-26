@@ -13,6 +13,8 @@ import {
 import { saveLocalItinerary } from "@/lib/itinerary-export";
 import { useLocale } from "@/lib/i18n/context";
 import { activeLocale, getDict, interpolate } from "@/lib/i18n";
+import { backendErrorText } from "@/lib/backend-error";
+import { walletErrorText } from "@/lib/wallet-error";
 import type { ItineraryDay, Quote, SettlementEvent, SettlementStep, TripRequest } from "@/lib/types";
 
 export type CheckoutStage =
@@ -193,7 +195,7 @@ export function useCheckout(params: {
       await refreshFunds();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : getDict(activeLocale()).errors.claimFailed
+        walletErrorText(activeLocale(), err, getDict(activeLocale()).errors.claimFailed)
       );
     } finally {
       setBusy(null);
@@ -215,7 +217,7 @@ export function useCheckout(params: {
       await refreshFunds();
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : getDict(activeLocale()).errors.approveFailed
+        walletErrorText(activeLocale(), err, getDict(activeLocale()).errors.approveFailed)
       );
     } finally {
       setBusy(null);
@@ -296,7 +298,8 @@ export function useCheckout(params: {
             invalidateVoucherList();
           }
           if (event.type === "settlement.error") {
-            setError(event.message);
+            // 后端只给 code + details，文案按当前语言取字典
+            setError(backendErrorText(activeLocale(), event) ?? event.message);
           }
         },
       },
@@ -427,11 +430,11 @@ export function useCheckout(params: {
       await refreshFunds();
 
       await registerOrder(finalOrderId, hash);
-      await       watchSettlement(finalOrderId);
+      await watchSettlement(finalOrderId);
     } catch (err) {
       console.error("[pay] 支付流程失败:", err);
       setError(
-        err instanceof Error ? err.message : getDict(activeLocale()).errors.payFailed
+        walletErrorText(activeLocale(), err, getDict(activeLocale()).errors.payFailed)
       );
       setBusy(null);
       await refreshFunds();

@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { BACKEND_URL } from "@/lib/contracts";
+import { backendErrorText } from "@/lib/backend-error";
 import { useT } from "@/lib/i18n/context";
 import { categoryLabel } from "@/lib/i18n/labels";
 import type { TripGroup } from "./use-vouchers";
@@ -65,9 +66,10 @@ export function useTripSummary(trip: TripGroup) {
       if (!response.ok) {
         const payload = (await response
           .json()
-          .catch(() => null)) as { message?: string } | null;
+          .catch(() => null)) as { error?: string; message?: string } | null;
         throw new Error(
-          payload?.message ?? t("errors.summaryHttp", { status: response.status })
+          backendErrorText(locale, { code: payload?.error, message: payload?.message }) ??
+            t("errors.summaryHttp", { status: response.status })
         );
       }
 

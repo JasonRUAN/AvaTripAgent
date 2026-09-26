@@ -34,6 +34,7 @@ import {
   type BudgetState,
 } from "@/lib/i18n/labels";
 import { formatNumber } from "@/lib/format";
+import { backendErrorText } from "@/lib/backend-error";
 
 function PhaseTrack({ phase }: { phase: Phase }) {
   const { locale } = useT();
@@ -518,7 +519,7 @@ export function AgentStream({
 
       {state.error ? (
         <div className="rounded-2xl border border-coral-500/30 bg-coral-100 px-4 py-3 text-sm font-semibold text-coral-500">
-          {state.error}
+          {backendErrorText(locale, state.error) ?? state.error.message}
         </div>
       ) : null}
 

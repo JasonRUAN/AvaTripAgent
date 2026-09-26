@@ -11,6 +11,7 @@ import { type AgentHealth, isHttpUrl, parseHealthCategories, probeAgentHealth } 
 import { HealthLamp } from "@/components/agent-card";
 import { useT } from "@/lib/i18n/context";
 import { categoryLabel } from "@/lib/i18n/labels";
+import { walletErrorText } from "@/lib/wallet-error";
 import {
   ALL_CATEGORIES,
   CATEGORY_ICON,
@@ -111,7 +112,7 @@ export default function AdminPage() {
       setMessage(t("admin.registered"));
       void refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : t("admin.registerFailed"));
+      setMessage(walletErrorText(locale, error, t("admin.registerFailed")));
     }
   };
 

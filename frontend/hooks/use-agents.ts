@@ -95,11 +95,9 @@ export function useAgents() {
         }
         setAgents(profiles);
       } catch (chainError) {
-        setError(
-          chainError instanceof Error
-            ? chainError.message
-            : getDict(activeLocale()).errors.chainReadFailed
-        );
+        // viem 的报错只有英文原文，直接展示会和界面语言打架：控制台留原文，界面走字典
+        console.error("[agents] 读取链上服务商失败:", chainError);
+        setError(getDict(activeLocale()).errors.chainReadFailed);
         setAgents([]);
       }
     } finally {

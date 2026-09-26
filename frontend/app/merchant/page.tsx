@@ -7,6 +7,7 @@ import { VoucherCard } from "@/components/voucher-card";
 import { BACKEND_URL } from "@/lib/contracts";
 import { invalidateVoucherList } from "@/lib/session-cache";
 import { useT } from "@/lib/i18n/context";
+import { backendErrorText } from "@/lib/backend-error";
 import type { VoucherDetail } from "@/lib/types";
 
 /**
@@ -24,7 +25,7 @@ interface Notice {
 
 /** 商户核销端（演示）：输入 tokenId，后端自动匹配签发 Agent 身份完成链上核销 */
 export default function MerchantPage() {
-  const { t } = useT();
+  const { t, locale } = useT();
   const [tokenId, setTokenId] = useState("");
   const [detail, setDetail] = useState<VoucherDetail | null>(null);
   const [busy, setBusy] = useState(false);
@@ -79,7 +80,15 @@ export default function MerchantPage() {
         setNotice(
           payload.error === "VOUCHER_NOT_FOUND"
             ? { code: "not_exist", text: t("merchant.notExist") }
-            : { code: "failed", text: payload.message ?? t("merchant.redeemFailed") }
+            : {
+                code: "failed",
+                // 后端只回 code：按当前语言取字典，未知 code 才回退服务端 message
+                text:
+                  backendErrorText(locale, {
+                    code: payload.error,
+                    message: payload.message,
+                  }) ?? t("merchant.redeemFailed"),
+              }
         );
         return;
       }

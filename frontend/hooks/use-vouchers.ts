@@ -157,11 +157,9 @@ export function useVouchers() {
         if (cancelled) return;
         setLoading(false);
         setRefreshing(false);
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : getDict(locale).errors.voucherReadFailed
-        );
+        // 链上读失败只会抛 viem 英文原文：控制台留原文，界面按当前语言走字典
+        console.error("[vouchers] 读取链上凭证失败:", cause);
+        setError(getDict(locale).errors.voucherReadFailed);
         // 后台更新失败时保留已经画出来的缓存列表，不让页面塌成空态
         if (!cached) setFetched(EMPTY);
       }

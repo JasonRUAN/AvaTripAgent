@@ -13,6 +13,7 @@ import {
   writeSession,
 } from "@/lib/session-cache";
 import { BACKEND_URL } from "@/lib/contracts";
+import type { BackendErrorPayload } from "@/lib/backend-error";
 import {
   applySelection,
   fillDay,
@@ -86,7 +87,11 @@ export interface RunState {
   offerPlacements: Record<string, number>;
   budget?: { total: number; items: { label: string; category: number; amount: number }[]; budget: number };
   quote?: Quote;
-  error?: string;
+  /**
+   * 后端报错。存 code + details 而不是成品文案：
+   * 渲染时才按当前语言取字典，切语言后旧错误也能立刻换成对应语言。
+   */
+  error?: BackendErrorPayload;
 }
 
 const INITIAL: RunState = {
@@ -131,12 +136,19 @@ const SERVER_STORE: PlanStore = {
 
 let cachedStore: PlanStore | null = null;
 
-function hydrateState(raw: RunState): RunState {
+/** 快照可能来自旧版本（error 曾是成品字符串），读取时放宽再归一 */
+type SnapshotRunState = Omit<RunState, "error"> & {
+  error?: BackendErrorPayload | string;
+};
+
+function hydrateState(raw: SnapshotRunState): RunState {
   const baseDays = raw.baseDays ?? raw.days.flatMap((day) => (day.day ? [day.day] : []));
   const recommended = raw.recommendedOfferIds ?? recommendedOfferIds(baseDays);
   return {
     ...INITIAL,
     ...raw,
+    // 旧快照里的字符串错误没有 code：包成 payload，渲染时按原文兜底展示
+    error: typeof raw.error === "string" ? { message: raw.error } : raw.error,
     status: raw.status === "running" ? "done" : raw.status,
     baseDays,
     recommendMode: parseRecommendMode(raw.recommendMode),
@@ -419,7 +431,11 @@ export function usePlanRun() {
         return { ...draft, degraded: true };
 
       case "run.error":
-        return { ...draft, status: "error", error: event.message };
+        return {
+          ...draft,
+          status: "error",
+          error: { code: event.code, message: event.message, details: event.details },
+        };
 
       case "run.done":
         return { ...draft, status: "done" };

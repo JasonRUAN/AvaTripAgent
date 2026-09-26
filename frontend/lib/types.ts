@@ -229,7 +229,9 @@ export type StreamEvent =
   | { type: "budget.update"; total: number; items: BudgetItem[]; budget: number }
   | { type: "quote.ready"; quote: Quote }
   | { type: "run.degraded"; reason: string }
-  | { type: "run.error"; code: string; message: string }
+  // code = 稳定错误标识（前端据此取本地化文案）；message = 服务端默认文案（未知 code 时兜底）；
+  // details = 语言无关的技术细节（地址 / 数量 / 原始异常），由前端原样追加
+  | { type: "run.error"; code: string; message: string; details?: string }
   | { type: "run.done" };
 
 export type StreamEventType = StreamEvent["type"];
@@ -256,7 +258,7 @@ export type SettlementEvent =
   | { type: "settlement.start"; orderId: string; total: string }
   | { type: "settlement.step"; step: SettlementStep }
   | { type: "settlement.done"; orderId: string; tokenIds: string[] }
-  | { type: "settlement.error"; code: string; message: string };
+  | { type: "settlement.error"; code: string; message: string; details?: string };
 
 // ---------------------------------------------------------------- 凭证
 

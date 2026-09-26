@@ -5,6 +5,7 @@ import { useAccount, usePublicClient, useWriteContract } from "wagmi";
 import { waitForTransactionReceipt } from "viem/actions";
 import { CONTRACTS, REVIEW_ABI, isReviewDeployed } from "@/lib/contracts";
 import { useT } from "@/lib/i18n/context";
+import { walletErrorText } from "@/lib/wallet-error";
 import type { OnchainReview } from "@/lib/types";
 
 export function useTokenReview(tokenId?: string) {
@@ -61,7 +62,7 @@ export function useSubmitReview(tokenId: string) {
   const { address } = useAccount();
   const publicClient = usePublicClient();
   const { writeContractAsync, isPending } = useWriteContract();
-  const { t } = useT();
+  const { t, locale } = useT();
   const [error, setError] = useState<string | null>(null);
 
   const submit = useCallback(
@@ -87,13 +88,11 @@ export function useSubmitReview(tokenId: string) {
         }
         return true;
       } catch (submitError) {
-        setError(
-          submitError instanceof Error ? submitError.message : t("errors.submitFailed")
-        );
+        setError(walletErrorText(locale, submitError, t("errors.submitFailed")));
         return false;
       }
     },
-    [address, publicClient, t, tokenId, writeContractAsync]
+    [address, publicClient, t, locale, tokenId, writeContractAsync]
   );
 
   return { submit, isPending, error, address };
