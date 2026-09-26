@@ -5,10 +5,10 @@ pragma solidity ^0.8.20;
 /// @notice A deliberately simple faucet token for Avalanche Fuji demos only.
 /// @dev 沿用 AvaTrip-DEV 参考实现，逻辑不改：6 位小数 + 每次 10,000 的水龙头。
 contract MockUSDC {
-    string public constant name = "Travel Demo USD";
-    string public constant symbol = "tUSDC";
+    string public constant name = "AvaTrip Demo USD";
+    string public constant symbol = "atUSDC";
     uint8 public constant decimals = 6;
-    /// 单次水龙头额度：1,000,000 tUSDC，保证一单（通常 1~2 万）领一次就够付
+    /// 单次水龙头额度：1,000,000 atUSDC，保证一单（通常 1~2 万）领一次就够付
     uint256 public constant FAUCET_AMOUNT = 1_000_000 * 10 ** decimals;
 
     uint256 public totalSupply;

@@ -6,12 +6,14 @@ import {MockUSDC} from "../src/MockUSDC.sol";
 import {AgentRegistry} from "../src/AgentRegistry.sol";
 import {TripSettlement} from "../src/TripSettlement.sol";
 import {TravelVoucher} from "../src/TravelVoucher.sol";
+import {AgentReview} from "../src/AgentReview.sol";
 
 contract AvaTripTest is Test {
     MockUSDC usdc;
     AgentRegistry registry;
     TripSettlement settlement;
     TravelVoucher voucher;
+    AgentReview reviews;
 
     address owner = address(this);
     address orchestrator = makeAddr("orchestrator");
@@ -25,17 +27,55 @@ contract AvaTripTest is Test {
         usdc = new MockUSDC();
         registry = new AgentRegistry();
         voucher = new TravelVoucher(address(registry));
+        reviews = new AgentReview(address(voucher));
         settlement = new TripSettlement(address(usdc), address(registry), orchestrator);
 
-        registry.registerAgent(flightAgent, "AvaFlights Agent", AgentRegistry.AgentCategory.Flight, "flight");
-        registry.registerAgent(hotelAgent, "AvaStays Agent", AgentRegistry.AgentCategory.Hotel, "hotel");
         registry.registerAgent(
-            attractionAgent, "AvaTickets Agent", AgentRegistry.AgentCategory.Attraction, "attraction"
+            flightAgent,
+            "AvaFlights Agent",
+            _mask(AgentRegistry.AgentCategory.Flight),
+            "http://127.0.0.1:3011",
+            unicode"Avalanche 上的机票询价 Agent，覆盖亚太主要航线。",
+            "https://avaflights.example"
         );
-        registry.registerAgent(diningAgent, "AvaTables Agent", AgentRegistry.AgentCategory.Dining, "dining");
+        registry.registerAgent(
+            hotelAgent,
+            "AvaStays Agent",
+            _mask(AgentRegistry.AgentCategory.Hotel),
+            "http://127.0.0.1:3012",
+            unicode"精选酒店与民宿，按区域与星级即时报价。",
+            "https://avastays.example"
+        );
+        registry.registerAgent(
+            attractionAgent,
+            "AvaTickets Agent",
+            _mask(AgentRegistry.AgentCategory.Attraction),
+            "http://127.0.0.1:3013",
+            unicode"景点门票与体验活动预订。",
+            "https://avatickets.example"
+        );
+        registry.registerAgent(
+            diningAgent,
+            "AvaTables Agent",
+            _mask(AgentRegistry.AgentCategory.Dining),
+            "http://127.0.0.1:3014",
+            unicode"本地餐厅与特色料理预订。",
+            "https://avatables.example"
+        );
 
         vm.prank(traveler);
         usdc.faucet();
+    }
+
+    function _mask(AgentRegistry.AgentCategory category) internal pure returns (uint8) {
+        return uint8(1) << uint8(category);
+    }
+
+    function _contains(address[] memory listed, address agent) internal pure returns (bool) {
+        for (uint256 i; i < listed.length; ++i) {
+            if (listed[i] == agent) return true;
+        }
+        return false;
     }
 
     function _lineItems() internal view returns (TripSettlement.LineItem[] memory items) {
@@ -69,17 +109,92 @@ contract AvaTripTest is Test {
         AgentRegistry.AgentInfo memory info = registry.getAgent(hotelAgent);
         assertEq(info.name, "AvaStays Agent");
         assertTrue(info.active);
+        assertEq(info.description, unicode"精选酒店与民宿，按区域与星级即时报价。");
+        assertEq(info.website, "https://avastays.example");
     }
 
     function test_RegistryOnlyOwnerCanRegister() public {
         vm.prank(traveler);
         vm.expectRevert(AgentRegistry.NotOwner.selector);
-        registry.registerAgent(traveler, "Rogue", AgentRegistry.AgentCategory.Flight, "x");
+        registry.registerAgent(traveler, "Rogue", _mask(AgentRegistry.AgentCategory.Flight), "x", "", "");
     }
 
     function test_RegistryCanDeactivate() public {
         registry.setActive(hotelAgent, false);
         assertFalse(registry.isActiveAgent(hotelAgent));
+        address[] memory activeHotels = registry.getAgentsByCategoryActive(AgentRegistry.AgentCategory.Hotel);
+        assertEq(activeHotels.length, 0);
+    }
+
+    function test_RegistryListsByCategory() public view {
+        address[] memory flights = registry.getAgentsByCategory(AgentRegistry.AgentCategory.Flight);
+        assertEq(flights.length, 1);
+        assertEq(flights[0], flightAgent);
+        address[] memory hotels = registry.getAgentsByCategoryActive(AgentRegistry.AgentCategory.Hotel);
+        assertEq(hotels.length, 1);
+        assertEq(hotels[0], hotelAgent);
+    }
+
+    function test_RegistryReregisterMovesCategory() public {
+        registry.registerAgent(
+            flightAgent, "Now Hotel", _mask(AgentRegistry.AgentCategory.Hotel), "http://127.0.0.1:3099", unicode"改挂酒店", "https://nowhotel.example"
+        );
+        address[] memory flights = registry.getAgentsByCategory(AgentRegistry.AgentCategory.Flight);
+        address[] memory hotels = registry.getAgentsByCategory(AgentRegistry.AgentCategory.Hotel);
+        assertEq(flights.length, 0);
+        assertEq(hotels.length, 2);
+        AgentRegistry.AgentInfo memory info = registry.getAgent(flightAgent);
+        assertEq(uint8(info.category), uint8(AgentRegistry.AgentCategory.Hotel));
+        assertEq(registry.getCategoryMask(flightAgent), _mask(AgentRegistry.AgentCategory.Hotel));
+        assertEq(info.endpoint, "http://127.0.0.1:3099");
+        assertEq(info.description, unicode"改挂酒店");
+        assertEq(info.website, "https://nowhotel.example");
+    }
+
+    function test_RegistryMultiCategoryIndexedEverywhere() public {
+        uint8 omni = 15;
+        registry.registerAgent(flightAgent, "AvaOmni Agent", omni, "http://127.0.0.1:3088", unicode"综合服务商", "");
+        assertEq(registry.getCategoryMask(flightAgent), omni);
+        AgentRegistry.AgentInfo memory info = registry.getAgent(flightAgent);
+        assertEq(uint8(info.category), uint8(AgentRegistry.AgentCategory.Flight));
+        assertTrue(_contains(registry.getAgentsByCategory(AgentRegistry.AgentCategory.Flight), flightAgent));
+        assertTrue(_contains(registry.getAgentsByCategory(AgentRegistry.AgentCategory.Hotel), flightAgent));
+        assertTrue(_contains(registry.getAgentsByCategory(AgentRegistry.AgentCategory.Attraction), flightAgent));
+        assertTrue(_contains(registry.getAgentsByCategory(AgentRegistry.AgentCategory.Dining), flightAgent));
+        assertEq(registry.getAgentsByCategory(AgentRegistry.AgentCategory.Flight).length, 1);
+        assertEq(registry.getAgentsByCategory(AgentRegistry.AgentCategory.Hotel).length, 2);
+    }
+
+    function test_RegistryRejectsEmptyMask() public {
+        vm.expectRevert(AgentRegistry.EmptyCategories.selector);
+        registry.registerAgent(makeAddr("empty"), "None", 0, "http://x", "", "");
+    }
+
+    function test_RegistryStoresDescriptionAndWebsite() public {
+        address extra = makeAddr("extra");
+        registry.registerAgent(
+            extra,
+            "AvaExtra Agent",
+            _mask(AgentRegistry.AgentCategory.Dining),
+            "http://127.0.0.1:3090",
+            unicode"第一版简介",
+            "https://extra.example"
+        );
+        AgentRegistry.AgentInfo memory first = registry.getAgent(extra);
+        assertEq(first.description, unicode"第一版简介");
+        assertEq(first.website, "https://extra.example");
+
+        registry.registerAgent(
+            extra,
+            "AvaExtra Agent",
+            _mask(AgentRegistry.AgentCategory.Dining),
+            "http://127.0.0.1:3090",
+            unicode"覆盖后的简介",
+            ""
+        );
+        AgentRegistry.AgentInfo memory second = registry.getAgent(extra);
+        assertEq(second.description, unicode"覆盖后的简介");
+        assertEq(second.website, "");
     }
 
     // ------------------------------------------------------------------ 托管与分账
@@ -93,7 +208,7 @@ contract AvaTripTest is Test {
         assertEq(uint8(order.status), uint8(TripSettlement.OrderStatus.Funded));
 
         assertEq(usdc.balanceOf(address(settlement)), 5752e6);
-        assertEq(usdc.balanceOf(traveler), 10_000e6 - 5752e6);
+        assertEq(usdc.balanceOf(traveler), 1_000_000e6 - 5752e6);
     }
 
     function test_CreateOrderRejectsInactiveProvider() public {
@@ -319,6 +434,84 @@ contract AvaTripTest is Test {
         voucher.redeem(attractionToken);
         assertFalse(voucher.isValid(attractionToken));
         assertTrue(voucher.isValid(flightToken));
+    }
+
+    // ------------------------------------------------------------------ 评价
+
+    function _issueAndRedeemFlight() internal returns (uint256 tokenId) {
+        uint256 orderId = _createOrder();
+        vm.prank(flightAgent);
+        tokenId = voucher.issueVoucher(traveler, orderId, 0, "PNR 7KQ2ZP", "NH959", keccak256("f"), 0, 0);
+        vm.prank(flightAgent);
+        voucher.redeem(tokenId);
+    }
+
+    function test_ReviewAfterRedeem() public {
+        uint256 tokenId = _issueAndRedeemFlight();
+
+        vm.prank(traveler);
+        reviews.submitReview(tokenId, 5, unicode"准点舒适");
+
+        (uint256 sum, uint256 count, uint256 avgX100) = reviews.getScore(flightAgent);
+        assertEq(sum, 5);
+        assertEq(count, 1);
+        assertEq(avgX100, 500);
+        assertTrue(reviews.hasReview(tokenId));
+        AgentReview.Review memory r = reviews.getReview(tokenId);
+        assertEq(r.score, 5);
+        assertEq(r.reviewer, traveler);
+        assertEq(r.provider, flightAgent);
+    }
+
+    function test_ReviewRejectsBeforeRedeem() public {
+        uint256 orderId = _createOrder();
+        vm.prank(flightAgent);
+        uint256 tokenId = voucher.issueVoucher(traveler, orderId, 0, "PNR", "NH959", keccak256("f"), 0, 0);
+
+        vm.prank(traveler);
+        vm.expectRevert(AgentReview.VoucherNotRedeemed.selector);
+        reviews.submitReview(tokenId, 5, "great");
+    }
+
+    function test_ReviewOnlyHolder() public {
+        uint256 tokenId = _issueAndRedeemFlight();
+
+        vm.prank(orchestrator);
+        vm.expectRevert(AgentReview.NotHolder.selector);
+        reviews.submitReview(tokenId, 4, "nope");
+    }
+
+    function test_ReviewRejectsDuplicateAndBadScore() public {
+        uint256 tokenId = _issueAndRedeemFlight();
+
+        vm.startPrank(traveler);
+        vm.expectRevert(AgentReview.InvalidScore.selector);
+        reviews.submitReview(tokenId, 0, "x");
+        reviews.submitReview(tokenId, 4, "ok");
+        vm.expectRevert(abi.encodeWithSelector(AgentReview.AlreadyReviewed.selector, tokenId));
+        reviews.submitReview(tokenId, 5, "again");
+        vm.stopPrank();
+    }
+
+    function test_ReviewAverageAcrossTwoTokens() public {
+        uint256 tokenId1 = _issueAndRedeemFlight();
+        uint256 orderId2 = _createOrder();
+        vm.prank(flightAgent);
+        uint256 tokenId2 = voucher.issueVoucher(traveler, orderId2, 0, "PNR2", "NH960", keccak256("f2"), 0, 0);
+        vm.prank(flightAgent);
+        voucher.redeem(tokenId2);
+
+        vm.startPrank(traveler);
+        reviews.submitReview(tokenId1, 5, "a");
+        reviews.submitReview(tokenId2, 3, "b");
+        vm.stopPrank();
+
+        (uint256 sum, uint256 count, uint256 avgX100) = reviews.getScore(flightAgent);
+        assertEq(sum, 8);
+        assertEq(count, 2);
+        assertEq(avgX100, 400);
+        AgentReview.Review[] memory list = reviews.getReviewsByAgent(flightAgent);
+        assertEq(list.length, 2);
     }
 
     // ------------------------------------------------------------------ 辅助

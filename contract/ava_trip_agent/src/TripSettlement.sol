@@ -8,7 +8,7 @@ import {AgentRegistry} from "./AgentRegistry.sol";
 /// @notice 旅行订单的资金托管与分账。
 ///
 /// 流程：
-///   1. 用户 approve 本合约后调用 `createOrder`，tUSDC 进入托管，订单状态 Funded
+///   1. 用户 approve 本合约后调用 `createOrder`，atUSDC 进入托管，订单状态 Funded
 ///   2. Orchestrator 逐项调用 `settle`，每一笔都是一笔独立可查的 Fuji 交易
 ///   3. 全部分账完成后订单状态 Settled，并发出 OrderSettled
 ///   4. 尚未分账时用户可 `cancel` 取回全额
@@ -25,7 +25,7 @@ contract TripSettlement {
     struct LineItem {
         /// 服务商 Agent 地址，必须是已注册且激活的 Agent
         address provider;
-        /// 6 位小数 tUSDC 最小单位
+        /// 6 位小数 atUSDC 最小单位
         uint256 amount;
         /// 0 机票 / 1 酒店 / 2 门票 / 3 餐饮
         uint8 category;
