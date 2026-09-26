@@ -1,6 +1,8 @@
 import { CONTRACTS, isDeployed } from "./contracts";
-import { addDays } from "./format";
-import { toUnits } from "./format";
+import { addDays, formatNumber, toUnits } from "./format";
+import { getDict, interpolate } from "./i18n";
+import type { Locale } from "./i18n/config";
+import { demoText, displayCity, preferenceDisplay } from "./i18n/dictionaries/demo";
 import type {
   Address,
   AttractionOffer,
@@ -8,6 +10,7 @@ import type {
   FlightOffer,
   HotelOffer,
   ItineraryDay,
+  ItineraryItem,
   Quote,
   StreamEvent,
   TripRequest,
@@ -18,6 +21,9 @@ import type {
  *
  * 现场网络差 / 后端未起 / LLM 超时时，前端直接播放这份流，
  * 保证「一句话 → 流式行程 → 报价单 → 支付 → 凭证」的完整故事能讲完。
+ *
+ * 所有展示文案（机场 / 酒店 / 景点 / 餐厅 / 每日主题 / 阶段提示）按 locale 生成，
+ * 而 id、三字码、价格、时间两套语言保持一致，避免切换语言后报价对不上。
  */
 
 /**
@@ -53,110 +59,148 @@ export const DEMO_AGENT_NAMES: Record<string, string> = {
   [DEMO_AGENTS.dining]: "AvaTables Agent",
 };
 
-const flight: FlightOffer = {
-  id: "flt-nh959",
-  carrier: "ANA",
-  flightNo: "NH959",
-  aircraft: "Boeing 787-8",
-  from: { city: "上海", airport: "浦东国际机场", terminal: "T2", code: "PVG" },
-  to: { city: "东京", airport: "羽田机场", terminal: "T3", code: "HND" },
-  departAt: "2026-10-01 09:25",
-  arriveAt: "2026-10-01 13:40",
-  durationMinutes: 195,
-  cabin: "经济舱",
-  seatsLeft: 7,
-  pricePerPerson: 2380,
-  currency: "USD",
-  provider: DEMO_AGENTS.flight,
-};
+/** 结构化字段（id / 三字码 / 价格 / 时间）不随语言变，只有展示文案换 */
+function demoFlights(locale: Locale): FlightOffer[] {
+  const text = demoText(locale);
+  const base = {
+    carrier: "ANA",
+    aircraft: "Boeing 787-8",
+    durationMinutes: 195,
+    cabin: text.flight.cabin,
+    seatsLeft: 7,
+    pricePerPerson: 2380,
+    currency: "USD",
+    provider: DEMO_AGENTS.flight,
+  };
+  return [
+    {
+      ...base,
+      id: "flt-nh959",
+      flightNo: "NH959",
+      from: { city: "上海", airport: text.airport.PVG, terminal: "T2", code: "PVG" },
+      to: { city: "东京", airport: text.airport.HND, terminal: "T3", code: "HND" },
+      departAt: "2026-10-01 09:25",
+      arriveAt: "2026-10-01 13:40",
+    },
+    {
+      ...base,
+      id: "flt-nh960",
+      flightNo: "NH960",
+      durationMinutes: 205,
+      from: { city: "东京", airport: text.airport.HND, terminal: "T3", code: "HND" },
+      to: { city: "上海", airport: text.airport.PVG, terminal: "T2", code: "PVG" },
+      departAt: "2026-10-05 18:10",
+      arriveAt: "2026-10-05 20:55",
+    },
+  ];
+}
 
-const flightBack: FlightOffer = {
-  ...flight,
-  id: "flt-nh960",
-  flightNo: "NH960",
-  from: { city: "东京", airport: "羽田机场", terminal: "T3", code: "HND" },
-  to: { city: "上海", airport: "浦东国际机场", terminal: "T2", code: "PVG" },
-  departAt: "2026-10-05 18:10",
-  arriveAt: "2026-10-05 20:55",
-  durationMinutes: 205,
-  pricePerPerson: 2380,
-};
+function demoHotel(locale: Locale): HotelOffer {
+  const text = demoText(locale);
+  return {
+    id: "htl-gracery",
+    name: text.hotel.name,
+    stars: 4,
+    area: text.hotel.area,
+    address: text.hotel.address,
+    checkIn: "2026-10-01 15:00",
+    checkOut: "2026-10-05 11:00",
+    roomType: text.hotel.roomType,
+    rooms: 1,
+    nights: 4,
+    pricePerNight: 168,
+    total: 672,
+    provider: DEMO_AGENTS.hotel,
+  };
+}
 
-const hotel: HotelOffer = {
-  id: "htl-gracery",
-  name: "新宿格拉斯丽酒店",
-  stars: 4,
-  area: "新宿",
-  address: "东京都新宿区歌舞伎町1-19-1",
-  checkIn: "2026-10-01 15:00",
-  checkOut: "2026-10-05 11:00",
-  roomType: "高级双床房 28㎡",
-  rooms: 1,
-  nights: 4,
-  pricePerNight: 168,
-  total: 672,
-  provider: DEMO_AGENTS.hotel,
-};
+function demoAttractions(locale: Locale): AttractionOffer[] {
+  const text = demoText(locale);
+  const provider = DEMO_AGENTS.attraction;
+  return [
+    {
+      id: "att-teamlab",
+      name: text.attraction["att-teamlab"]!.name,
+      area: text.attraction["att-teamlab"]!.area,
+      durationMinutes: 120,
+      openHours: "10:00-19:00",
+      needBooking: true,
+      pricePerPerson: 32,
+      provider,
+    },
+    {
+      id: "att-sensoji",
+      name: text.attraction["att-sensoji"]!.name,
+      area: text.attraction["att-sensoji"]!.area,
+      durationMinutes: 90,
+      openHours: "06:00-17:00",
+      needBooking: false,
+      pricePerPerson: 0,
+      provider,
+    },
+    {
+      id: "att-shibuya-sky",
+      name: text.attraction["att-shibuya-sky"]!.name,
+      area: text.attraction["att-shibuya-sky"]!.area,
+      durationMinutes: 75,
+      openHours: "10:00-22:30",
+      needBooking: true,
+      pricePerPerson: 25,
+      provider,
+    },
+  ];
+}
 
-const attractions: AttractionOffer[] = [
-  {
-    id: "att-teamlab",
-    name: "teamLab Planets TOKYO",
-    area: "台场",
-    durationMinutes: 120,
-    openHours: "10:00-19:00",
-    needBooking: true,
-    pricePerPerson: 32,
-    provider: DEMO_AGENTS.attraction,
-  },
-  {
-    id: "att-sensoji",
-    name: "浅草寺 & 仲见世通",
-    area: "浅草",
-    durationMinutes: 90,
-    openHours: "06:00-17:00",
-    needBooking: false,
-    pricePerPerson: 0,
-    provider: DEMO_AGENTS.attraction,
-  },
-  {
-    id: "att-shibuya-sky",
-    name: "SHIBUYA SKY 展望台",
-    area: "涩谷",
-    durationMinutes: 75,
-    openHours: "10:00-22:30",
-    needBooking: true,
-    pricePerPerson: 25,
-    provider: DEMO_AGENTS.attraction,
-  },
-];
+function demoDinings(locale: Locale): DiningOffer[] {
+  const text = demoText(locale);
+  const provider = DEMO_AGENTS.dining;
+  return [
+    {
+      id: "din-sushi-ue",
+      name: text.dining["din-sushi-ue"]!.name,
+      area: text.dining["din-sushi-ue"]!.area,
+      cuisine: text.dining["din-sushi-ue"]!.cuisine,
+      durationMinutes: 90,
+      pricePerPerson: 180,
+      provider,
+    },
+    {
+      id: "din-tempura",
+      name: text.dining["din-tempura"]!.name,
+      area: text.dining["din-tempura"]!.area,
+      cuisine: text.dining["din-tempura"]!.cuisine,
+      durationMinutes: 75,
+      pricePerPerson: 95,
+      provider,
+    },
+  ];
+}
 
-const dinings: DiningOffer[] = [
-  {
-    id: "din-sushi-ue",
-    name: "鮨 うえの（银座）",
-    area: "银座",
-    cuisine: "江户前寿司",
-    durationMinutes: 90,
-    pricePerPerson: 180,
-    provider: DEMO_AGENTS.dining,
-  },
-  {
-    id: "din-tempura",
-    name: "天ぷら 天源（新宿）",
-    area: "新宿",
-    cuisine: "天妇罗",
-    durationMinutes: 75,
-    pricePerPerson: 95,
-    provider: DEMO_AGENTS.dining,
-  },
-];
+export function getDemoOffers(locale: Locale) {
+  return {
+    flights: demoFlights(locale),
+    hotels: [demoHotel(locale)],
+    attractions: demoAttractions(locale),
+    dinings: demoDinings(locale),
+  };
+}
+
+/** 按 id 找回某个 offer，供逐日行程拼标题 / 备注 */
+function offerIndex(locale: Locale) {
+  const offers = getDemoOffers(locale);
+  const map = new Map<string, { kind: string; offer: unknown }>();
+  for (const flight of offers.flights) map.set(flight.id, { kind: "flight", offer: flight });
+  for (const hotel of offers.hotels) map.set(hotel.id, { kind: "hotel", offer: hotel });
+  for (const item of offers.attractions) map.set(item.id, { kind: "attraction", offer: item });
+  for (const item of offers.dinings) map.set(item.id, { kind: "dining", offer: item });
+  return map;
+}
 
 function day(
   index: number,
   date: string,
   theme: string,
-  items: ItineraryDay["items"]
+  items: ItineraryItem[]
 ): ItineraryDay {
   return {
     index,
@@ -168,144 +212,122 @@ function day(
 }
 
 /** 生成一份与给定需求匹配的演示行程（天数不足 5 天时自动截断） */
-export function buildDemoDays(request: TripRequest): ItineraryDay[] {
+export function buildDemoDays(request: TripRequest, locale: Locale): ItineraryDay[] {
+  const text = demoText(locale);
+  const units = getDict(locale).units;
   const start = request.startDate;
   const pax = request.pax;
+  const index = offerIndex(locale);
 
-  const all: ItineraryDay[] = [
-    day(0, start, "抵达 · 新宿落脚", [
-      {
-        time: "09:25",
-        title: `${flight.flightNo} ${flight.from.code} → ${flight.to.code}`,
-        offerId: flight.id,
-        category: 0,
-        note: `${flight.carrier} · ${flight.aircraft} · ${flight.durationMinutes} 分钟`,
-        price: flight.pricePerPerson * pax,
-      },
-      {
-        time: "15:00",
-        title: `入住 ${hotel.name}`,
-        offerId: hotel.id,
-        category: 1,
-        area: hotel.area,
-        note: `${hotel.roomType} · ${hotel.nights} 晚`,
-        price: hotel.total,
-      },
-      {
-        time: "19:30",
-        title: dinings[1].name,
-        offerId: dinings[1].id,
-        category: 3,
-        area: dinings[1].area,
-        note: `${dinings[1].cuisine} · 步行 6 分钟`,
-        price: dinings[1].pricePerPerson * pax,
-      },
-    ]),
-    day(1, addDays(start, 1), "台场 · 数字艺术与海风", [
-      {
-        time: "10:30",
-        title: attractions[0].name,
-        offerId: attractions[0].id,
-        category: 2,
-        area: attractions[0].area,
-        note: `需预约 · ${attractions[0].openHours}`,
-        price: attractions[0].pricePerPerson * pax,
-      },
-      {
-        time: "14:00",
-        title: "台场海滨公园散步",
-        note: "少走路方案：园内接驳车 + 室内展馆为主",
-      },
-      {
-        time: "18:30",
-        title: dinings[0].name,
-        offerId: dinings[0].id,
-        category: 3,
-        area: dinings[0].area,
-        note: `${dinings[0].cuisine} · 需提前订位`,
-        price: dinings[0].pricePerPerson * pax,
-      },
-    ]),
-    day(2, addDays(start, 2), "浅草 · 下町慢走", [
-      {
-        time: "09:30",
-        title: attractions[1].name,
-        offerId: attractions[1].id,
-        category: 2,
-        area: attractions[1].area,
-        note: `免费参拜 · ${attractions[1].openHours}`,
-        price: 0,
-      },
-      {
-        time: "12:30",
-        title: "合羽桥商店街觅食",
-        note: "少走路方案：商店街集中在一条街上，边逛边吃",
-        price: 40 * pax,
-      },
-      {
-        time: "16:00",
-        title: "隅田川游船",
-        note: "坐船代替步行，从浅草直达滨离宫",
-        price: 22 * pax,
-      },
-    ]),
-    day(3, addDays(start, 3), "涩谷 · 黄昏与夜景", [
-      {
-        time: "11:00",
-        title: "表参道 · 青山咖啡巡礼",
-        note: "想逛就逛，累了随时钻进咖啡馆",
-        price: 30 * pax,
-      },
-      {
-        time: "16:30",
-        title: attractions[2].name,
-        offerId: attractions[2].id,
-        category: 2,
-        area: attractions[2].area,
-        note: `日落时段入场 · ${attractions[2].openHours}`,
-        price: attractions[2].pricePerPerson * pax,
-      },
-      {
-        time: "19:30",
-        title: "涩谷居酒屋一条街",
-        category: 3,
-        area: "涩谷",
-        price: 70 * pax,
-      },
-    ]),
-    day(4, addDays(start, 4), "返程 · 羽田直飞", [
-      {
-        time: "10:00",
-        title: "新宿御苑晨间散步",
-        note: "离酒店步行 12 分钟",
-        price: 5 * pax,
-      },
-      {
-        time: "11:00",
-        title: "退房 · 寄存行李",
-        category: 1,
-        note: hotel.checkOut,
-      },
-      {
-        time: "18:10",
-        title: `${flightBack.flightNo} ${flightBack.from.code} → ${flightBack.to.code}`,
-        offerId: flightBack.id,
-        category: 0,
-        note: "机场大巴直达，避免换乘搬行李",
-        price: flightBack.pricePerPerson * pax,
-      },
-    ]),
-  ];
+  const hotel = demoHotel(locale);
+
+  /** 备注模板里能用到的变量 */
+  const noteVars = (offer: unknown, kind: string): Record<string, string | number> => {
+    if (kind === "flight") {
+      const item = offer as FlightOffer;
+      return {
+        carrier: item.carrier,
+        aircraft: item.aircraft,
+        duration: interpolate(units.minutes, { n: item.durationMinutes }),
+        checkOut: hotel.checkOut,
+      };
+    }
+    if (kind === "hotel") {
+      const item = offer as HotelOffer;
+      return {
+        hotelName: item.name,
+        roomType: item.roomType,
+        nights: interpolate(units.nights, { n: item.nights }),
+        checkOut: item.checkOut,
+      };
+    }
+    if (kind === "attraction") {
+      const item = offer as AttractionOffer;
+      return {
+        openHours: item.openHours,
+        booking: text.words.booking,
+        free: text.words.free,
+        sunset: text.words.sunset,
+        checkOut: hotel.checkOut,
+      };
+    }
+    if (kind === "dining") {
+      const item = offer as DiningOffer;
+      return {
+        cuisine: item.cuisine,
+        walk: text.words.walk,
+        reserve: text.words.reserve,
+        checkOut: hotel.checkOut,
+      };
+    }
+    // 自定义条目只可能用到退房时间
+    return { checkOut: hotel.checkOut };
+  };
+
+  /** 标题模板变量（目前只有酒店的 `{hotelName}`） */
+  const titleVars = (): Record<string, string | number> => ({
+    hotelName: hotel.name,
+  });
+
+  const buildItem = (
+    spec: (typeof text.days)[number]["items"][number]
+  ): ItineraryItem => {
+    const found = spec.offerRef ? index.get(spec.offerRef) : undefined;
+    const kind = found?.kind ?? spec.kind;
+
+    let title = spec.title;
+    if (!title && spec.titleTpl) {
+      title = interpolate(spec.titleTpl, titleVars());
+    }
+    if (!title && found) {
+      const offer = found.offer as { name?: string; flightNo?: string };
+      if (kind === "flight") {
+        const item = found.offer as FlightOffer;
+        title = `${item.flightNo} ${item.from.code} → ${item.to.code}`;
+      } else {
+        title = offer.name ?? "";
+      }
+    }
+
+    let note = spec.note;
+    if (!note && spec.noteTpl) {
+      note = interpolate(spec.noteTpl, noteVars(found?.offer ?? hotel, kind));
+    }
+
+    let price: number | undefined;
+    if (found) {
+      const offer = found.offer as {
+        pricePerPerson?: number;
+        total?: number;
+      };
+      if (kind === "hotel") price = offer.total;
+      else price = (offer.pricePerPerson ?? 0) * pax;
+    } else if (spec.pricePerPax !== undefined) {
+      price = spec.pricePerPax * pax;
+    }
+
+    return {
+      time: spec.time,
+      title: title ?? "",
+      offerId: spec.offerRef,
+      category: spec.category,
+      area: spec.area,
+      note,
+      price,
+    };
+  };
+
+  const all: ItineraryDay[] = text.days.map((spec, dayIndex) =>
+    day(
+      dayIndex,
+      dayIndex === 0 ? start : addDays(start, dayIndex),
+      spec.theme,
+      spec.items.map(buildItem)
+    )
+  );
 
   return all.slice(0, Math.max(1, Math.min(request.days, all.length)));
 }
-
-export const DEMO_OFFERS = {
-  flights: [flight, flightBack],
-  hotels: [hotel],
-  attractions,
-  dinings,
-};
 
 function hashLabel(input: string): `0x${string}` {
   // 演示环境不需要真 keccak，用一个稳定的伪 hash 即可（后端会用真 keccak）
@@ -318,14 +340,27 @@ function hashLabel(input: string): `0x${string}` {
 }
 
 /** 组装演示报价单 */
-export function buildDemoQuote(request: TripRequest): Quote {
+export function buildDemoQuote(request: TripRequest, locale: Locale): Quote {
+  const text = demoText(locale);
+  const units = getDict(locale).units;
   const pax = request.pax;
+
+  const flights = demoFlights(locale);
+  const flight = flights[0]!;
+  const flightBack = flights[1]!;
+  const hotel = demoHotel(locale);
+  const attractions = demoAttractions(locale);
+  const dinings = demoDinings(locale);
+
   const flightTotal = (flight.pricePerPerson + flightBack.pricePerPerson) * pax;
   const attractionTotal =
-    (attractions[0].pricePerPerson + attractions[2].pricePerPerson) * pax;
+    (attractions[0]!.pricePerPerson + attractions[2]!.pricePerPerson) * pax;
   const diningTotal =
-    (dinings[0].pricePerPerson + dinings[1].pricePerPerson) * pax + 167 * pax;
+    (dinings[0]!.pricePerPerson + dinings[1]!.pricePerPerson) * pax + 167 * pax;
   const hotelTotal = hotel.total;
+
+  const paxSuffix = interpolate(units.paxSuffix, { n: pax });
+  const nightsSuffix = interpolate(units.nightsSuffix, { n: hotel.nights });
 
   const lineItems = [
     // 机票：每个航段一条（往返 = 两张机票凭证）
@@ -335,7 +370,7 @@ export function buildDemoQuote(request: TripRequest): Quote {
       category: 0 as const,
       amount: toUnits(flight.pricePerPerson * pax).toString(),
       itemHash: hashLabel(`flight:${flight.id}`),
-      label: `${flight.flightNo} ${flight.from.code} → ${flight.to.code} ×${pax} 人`,
+      label: `${flight.flightNo} ${flight.from.code} → ${flight.to.code} ${paxSuffix}`,
       itemId: flight.id,
     },
     {
@@ -344,7 +379,7 @@ export function buildDemoQuote(request: TripRequest): Quote {
       category: 0 as const,
       amount: toUnits(flightBack.pricePerPerson * pax).toString(),
       itemHash: hashLabel(`flight:${flightBack.id}`),
-      label: `${flightBack.flightNo} ${flightBack.from.code} → ${flightBack.to.code} ×${pax} 人`,
+      label: `${flightBack.flightNo} ${flightBack.from.code} → ${flightBack.to.code} ${paxSuffix}`,
       itemId: flightBack.id,
     },
     // 酒店：每家一条
@@ -354,7 +389,7 @@ export function buildDemoQuote(request: TripRequest): Quote {
       category: 1 as const,
       amount: toUnits(hotelTotal).toString(),
       itemHash: hashLabel(`hotel:${hotel.id}`),
-      label: `${hotel.name} ${hotel.roomType} ×${hotel.nights} 晚`,
+      label: `${hotel.name} ${hotel.roomType} ${nightsSuffix}`,
       itemId: hotel.id,
     },
     // 门票：每个景点一条
@@ -362,38 +397,38 @@ export function buildDemoQuote(request: TripRequest): Quote {
       provider: DEMO_AGENTS.attraction,
       providerName: DEMO_AGENT_NAMES[DEMO_AGENTS.attraction],
       category: 2 as const,
-      amount: toUnits(attractions[0].pricePerPerson * pax).toString(),
-      itemHash: hashLabel(`attraction:${attractions[0].id}`),
-      label: `${attractions[0].name} ×${pax} 人`,
-      itemId: attractions[0].id,
+      amount: toUnits(attractions[0]!.pricePerPerson * pax).toString(),
+      itemHash: hashLabel(`attraction:${attractions[0]!.id}`),
+      label: `${attractions[0]!.name} ${paxSuffix}`,
+      itemId: attractions[0]!.id,
     },
     {
       provider: DEMO_AGENTS.attraction,
       providerName: DEMO_AGENT_NAMES[DEMO_AGENTS.attraction],
       category: 2 as const,
-      amount: toUnits(attractions[2].pricePerPerson * pax).toString(),
-      itemHash: hashLabel(`attraction:${attractions[2].id}`),
-      label: `${attractions[2].name} ×${pax} 人`,
-      itemId: attractions[2].id,
+      amount: toUnits(attractions[2]!.pricePerPerson * pax).toString(),
+      itemHash: hashLabel(`attraction:${attractions[2]!.id}`),
+      label: `${attractions[2]!.name} ${paxSuffix}`,
+      itemId: attractions[2]!.id,
     },
     // 餐饮：每家一条
     {
       provider: DEMO_AGENTS.dining,
       providerName: DEMO_AGENT_NAMES[DEMO_AGENTS.dining],
       category: 3 as const,
-      amount: toUnits(dinings[0].pricePerPerson * pax).toString(),
-      itemHash: hashLabel(`dining:${dinings[0].id}`),
-      label: `${dinings[0].name} ×${pax} 人`,
-      itemId: dinings[0].id,
+      amount: toUnits(dinings[0]!.pricePerPerson * pax).toString(),
+      itemHash: hashLabel(`dining:${dinings[0]!.id}`),
+      label: `${dinings[0]!.name} ${paxSuffix}`,
+      itemId: dinings[0]!.id,
     },
     {
       provider: DEMO_AGENTS.dining,
       providerName: DEMO_AGENT_NAMES[DEMO_AGENTS.dining],
       category: 3 as const,
-      amount: toUnits(dinings[1].pricePerPerson * pax).toString(),
-      itemHash: hashLabel(`dining:${dinings[1].id}`),
-      label: `${dinings[1].name} ×${pax} 人`,
-      itemId: dinings[1].id,
+      amount: toUnits(dinings[1]!.pricePerPerson * pax).toString(),
+      itemHash: hashLabel(`dining:${dinings[1]!.id}`),
+      label: `${dinings[1]!.name} ${paxSuffix}`,
+      itemId: dinings[1]!.id,
     },
     {
       provider: DEMO_AGENTS.dining,
@@ -401,7 +436,7 @@ export function buildDemoQuote(request: TripRequest): Quote {
       category: 3 as const,
       amount: toUnits(167 * pax).toString(),
       itemHash: hashLabel(`dining:street:${pax}`),
-      label: `商店街小吃 ×${pax} 人`,
+      label: `${text.streetFood} ${paxSuffix}`,
     },
   ];
 
@@ -428,42 +463,76 @@ export function buildDemoQuote(request: TripRequest): Quote {
  * 生成完整的演示事件序列。
  * 播放时由 `lib/sse-client.ts` 的打字机节奏逐条吐出，模拟真实 SSE 流的观感。
  */
-export function buildDemoEvents(request: TripRequest): StreamEvent[] {
-  const days = buildDemoDays(request);
-  const quote = buildDemoQuote(request);
+export function buildDemoEvents(request: TripRequest, locale: Locale): StreamEvent[] {
+  const text = demoText(locale);
+  const days = buildDemoDays(request, locale);
+  const quote = buildDemoQuote(request, locale);
+  const offers = getDemoOffers(locale);
 
   const events: StreamEvent[] = [
     { type: "run.start", runId: "demo-run", request },
     {
       type: "agent.status",
       phase: "understanding",
-      label: "正在理解你的需求…",
+      label: text.status.understanding,
     },
     {
       type: "agent.delta",
-      text: `收到：${request.origin} 出发去${request.destination}，${request.days} 天 ${request.pax} 人，预算 ${request.budget} 美元。偏好是「${request.preferences.join("、")}」，我会优先安排少走路、餐食质量高的方案。`,
+      text: interpolate(text.deltaIntro, {
+        origin: displayCity(request.origin, locale),
+        destination: displayCity(request.destination, locale),
+        days: request.days,
+        pax: request.pax,
+        budget: request.budget,
+        preferences: request.preferences
+          .map((pref) => preferenceDisplay(pref, locale))
+          .join(text.listSeparator),
+      }),
     },
     {
       type: "agent.status",
       phase: "sourcing",
-      label: "正在向 4 家服务商 Agent 询价…",
+      label: text.status.sourcing,
     },
-    { type: "tool.call", name: "search_flights", args: { from: request.origin, to: request.destination, pax: request.pax } },
-    { type: "tool.result", name: "search_flights", data: { count: DEMO_OFFERS.flights.length }, ms: 320 },
-    { type: "offer.flight", items: DEMO_OFFERS.flights },
-    { type: "tool.call", name: "search_hotels", args: { city: request.destination, rooms: request.rooms } },
-    { type: "tool.result", name: "search_hotels", data: { count: DEMO_OFFERS.hotels.length }, ms: 240 },
-    { type: "offer.hotel", items: DEMO_OFFERS.hotels },
-    { type: "tool.call", name: "search_attractions", args: { city: request.destination, styles: request.preferences } },
-    { type: "tool.result", name: "search_attractions", data: { count: attractions.length }, ms: 280 },
-    { type: "offer.attraction", items: attractions },
-    { type: "tool.call", name: "search_restaurants", args: { city: request.destination, styles: ["想吃好"] } },
-    { type: "tool.result", name: "search_restaurants", data: { count: dinings.length }, ms: 190 },
-    { type: "offer.dining", items: dinings },
+    {
+      type: "tool.call",
+      name: "search_flights",
+      args: {
+        from: displayCity(request.origin, locale),
+        to: displayCity(request.destination, locale),
+        pax: request.pax,
+      },
+    },
+    { type: "tool.result", name: "search_flights", data: { count: offers.flights.length }, ms: 320 },
+    { type: "offer.flight", items: offers.flights },
+    {
+      type: "tool.call",
+      name: "search_hotels",
+      args: { city: displayCity(request.destination, locale), rooms: request.rooms },
+    },
+    { type: "tool.result", name: "search_hotels", data: { count: offers.hotels.length }, ms: 240 },
+    { type: "offer.hotel", items: offers.hotels },
+    {
+      type: "tool.call",
+      name: "search_attractions",
+      args: {
+        city: displayCity(request.destination, locale),
+        styles: request.preferences.map((pref) => preferenceDisplay(pref, locale)),
+      },
+    },
+    { type: "tool.result", name: "search_attractions", data: { count: offers.attractions.length }, ms: 280 },
+    { type: "offer.attraction", items: offers.attractions },
+    {
+      type: "tool.call",
+      name: "search_restaurants",
+      args: { city: displayCity(request.destination, locale), styles: [text.preferences[0] ?? ""] },
+    },
+    { type: "tool.result", name: "search_restaurants", data: { count: offers.dinings.length }, ms: 190 },
+    { type: "offer.dining", items: offers.dinings },
     {
       type: "agent.status",
       phase: "planning",
-      label: "正在编排逐日行程…",
+      label: text.status.planning,
     },
   ];
 
@@ -472,12 +541,12 @@ export function buildDemoEvents(request: TripRequest): StreamEvent[] {
     events.push({
       type: "day.delta",
       index: d.index,
-      text: d.items.map((item) => `${item.time} ${item.title}`).join("；"),
+      text: d.items.map((item) => `${item.time} ${item.title}`).join(text.daySeparator),
     });
     events.push({ type: "day.done", index: d.index, day: d });
   }
 
-  events.push({ type: "agent.status", phase: "budgeting", label: "正在核算预算…" });
+  events.push({ type: "agent.status", phase: "budgeting", label: text.status.budgeting });
   events.push({
     type: "budget.update",
     total: quote.totalUsd,
@@ -491,7 +560,10 @@ export function buildDemoEvents(request: TripRequest): StreamEvent[] {
   events.push({
     type: "agent.status",
     phase: "done",
-    label: `行程已就绪，共 ${days.length} 天，总价 ${quote.totalUsd} 美元`,
+    label: interpolate(text.status.done, {
+      days: days.length,
+      total: formatNumber(quote.totalUsd, locale),
+    }),
   });
   events.push({ type: "quote.ready", quote });
   events.push({ type: "run.done" });

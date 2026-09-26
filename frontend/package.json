@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "sync-deployment": "test -f ../deployments/fuji.json && cp ../deployments/fuji.json ./deployments/fuji.json || true",
+    "predev": "npm run sync-deployment",
+    "prebuild": "npm run sync-deployment",
+    "dev": "next dev -H 127.0.0.1 -p 13000",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"

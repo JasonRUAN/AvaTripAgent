@@ -6,10 +6,14 @@ import { useAccount, usePublicClient, useReadContract, useWriteContract } from "
 import { consumeSSE } from "@/lib/sse-client";
 import { BACKEND_URL, CONTRACTS, SETTLEMENT_ABI, USDC_ABI, isDeployed } from "@/lib/contracts";
 import {
+  invalidateVoucherList,
   loadCheckoutSnapshot,
   saveCheckoutSnapshot,
 } from "@/lib/session-cache";
-import type { Quote, SettlementEvent, SettlementStep } from "@/lib/types";
+import { saveLocalItinerary } from "@/lib/itinerary-export";
+import { useLocale } from "@/lib/i18n/context";
+import { activeLocale, getDict, interpolate } from "@/lib/i18n";
+import type { ItineraryDay, Quote, SettlementEvent, SettlementStep, TripRequest } from "@/lib/types";
 
 export type CheckoutStage =
   | "connect"
@@ -21,6 +25,12 @@ export type CheckoutStage =
 
 /** 结算进度快照里的 phase */
 type CheckoutSnapshotPhase = "idle" | "settling" | "done";
+
+/** step.key = `${orderId}-${index}`，并发到达时仍按报价单顺序排 */
+function stepIndex(key: string): number {
+  const n = Number(key.split("-").pop());
+  return Number.isFinite(n) ? n : 0;
+}
 
 /** 字符串 tripId → 合约需要的 uint256 */
 function numericTripId(tripId: string): bigint {
@@ -57,12 +67,19 @@ function orderIdFromReceipt(receipt: {
   return null;
 }
 
-export function useCheckout(params: { quote?: Quote; runId?: string }) {
-  const { quote } = params;
+export function useCheckout(params: {
+  quote?: Quote;
+  runId?: string;
+  days?: ItineraryDay[];
+  request?: TripRequest | null;
+}) {
+  const { quote, days, request } = params;
   const runId = params.runId;
   const { address, isConnected } = useAccount();
   const publicClient = usePublicClient();
   const { writeContractAsync } = useWriteContract();
+  // 错误文案按「出错那一刻」的语言生成，且不因此重建 pay / watchSettlement
+  const { t } = useLocale();
 
   /**
    * 结算进度按 runId 缓存（内存 + sessionStorage）：
@@ -145,7 +162,7 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
   }, [address, refetchAllowance, refetchBalance]);
 
   /**
-   * 当前步骤：连接钱包 → 领 tUSDC → 授权 → 支付。
+   * 当前步骤：连接钱包 → 领 atUSDC → 授权 → 支付。
    *
    * 完全由链上真实状态推导（是否连接 / 余额够不够 / 额度够不够），
    * 所以不管用户是点步骤里的按钮，还是直接点「确认支付」让 pay() 内部
@@ -156,7 +173,7 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
     if (phase === "done") return "done";
     if (!isConnected || !address) return "connect";
     if (!isDeployed) return "faucet";
-    // 链上状态还没读到时先停在「领 tUSDC」，下一步就是校验余额
+    // 链上状态还没读到时先停在「领 atUSDC」，下一步就是校验余额
     if (balance === undefined || balance < total) return "faucet";
     if (allowance === undefined || allowance < total) return "approve";
     return "pay";
@@ -175,7 +192,9 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
       await publicClient?.waitForTransactionReceipt({ hash });
       await refreshFunds();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "领取失败");
+      setError(
+        err instanceof Error ? err.message : getDict(activeLocale()).errors.claimFailed
+      );
     } finally {
       setBusy(null);
     }
@@ -195,7 +214,9 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
       await publicClient?.waitForTransactionReceipt({ hash });
       await refreshFunds();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "授权失败");
+      setError(
+        err instanceof Error ? err.message : getDict(activeLocale()).errors.approveFailed
+      );
     } finally {
       setBusy(null);
     }
@@ -204,19 +225,45 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
   /** 未部署合约时走模拟：直接登记订单，后端会用模拟分账 + 模拟发券 */
   const registerOrder = useCallback(
     async (orderIdValue: string, txHash?: `0x${string}`) => {
-      await fetch(`${BACKEND_URL}/api/orders`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          runId: params.runId,
-          orderId: orderIdValue,
-          traveler: address,
-          txHash,
-          total: quote?.total,
-        }),
-      });
+      let response: Response;
+      try {
+        response = await fetch(`${BACKEND_URL}/api/orders`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId: params.runId,
+            orderId: orderIdValue,
+            traveler: address,
+            txHash,
+            total: quote?.total,
+            quote,
+            days: days ?? [],
+          }),
+        });
+      } catch (err) {
+        // 浏览器原生 TypeError 只有 "Failed to fetch"，不带 URL，这里补上目标地址便于定位
+        throw new Error(
+          interpolate(getDict(activeLocale()).errors.backendUnreachable, {
+            url: BACKEND_URL,
+            msg: err instanceof Error ? err.message : String(err),
+          })
+        );
+      }
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(
+          interpolate(getDict(activeLocale()).errors.orderRegisterFailed, {
+            status: response.status,
+            detail,
+          }).slice(0, 200)
+        );
+      }
+      if (quote || (days && days.length > 0)) {
+        saveLocalItinerary(orderIdValue, { request, days: days ?? [], quote });
+      }
     },
-    [address, params.runId, quote?.total]
+    [address, days, params.runId, quote, request]
   );
 
   const watchSettlement = useCallback(async (orderIdValue: string) => {
@@ -227,22 +274,34 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
       `${BACKEND_URL}/api/orders/${orderIdValue}/stream`,
       { method: "GET" },
       {
+        onError: (error) => {
+          setError(
+            interpolate(getDict(activeLocale()).errors.settlementDisconnected, {
+              url: BACKEND_URL,
+              msg: error.message,
+            })
+          );
+        },
         onEvent: (event) => {
           if (event.type === "settlement.step") {
             setSteps((prev) => {
               const next = prev.filter((s) => s.key !== event.step.key);
-              return [...next, event.step].sort((a, b) => a.category - b.category);
+              return [...next, event.step].sort((a, b) => stepIndex(a.key) - stepIndex(b.key));
             });
           }
           if (event.type === "settlement.done") {
             setTokenIds(event.tokenIds);
             setPhase("done");
+            // 新凭证刚签发：凭证页的缓存必须作废，否则会显示「还没有凭证」的旧列表
+            invalidateVoucherList();
           }
           if (event.type === "settlement.error") {
             setError(event.message);
           }
         },
-      }
+      },
+      undefined,
+      activeLocale()
     );
   }, []);
 
@@ -258,7 +317,7 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
   }, [phase, orderId, watchSettlement]);
 
   const pay = useCallback(async () => {
-    if (!quote) return;
+    if (!quote || quote.lineItems.length === 0 || quote.total === "0") return;
     setError(null);
 
     // 演示模式（合约未部署）：跳过链上交互，直接让后端模拟分账 + 发券
@@ -271,7 +330,7 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
     }
 
     if (!address) {
-      setError("钱包未连接");
+      setError(getDict(activeLocale()).errors.walletNotConnected);
       return;
     }
 
@@ -283,15 +342,16 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
     );
     if (selfDealing) {
       setError(
-        `当前钱包就是服务商「${selfDealing.providerName}」的地址，` +
-          `合约不允许服务商给自己付款（ProviderIsTraveler）。请切换到旅客钱包后重试。`
+        interpolate(getDict(activeLocale()).errors.selfDealing, {
+          provider: selfDealing.providerName,
+        })
       );
       return;
     }
 
     setBusy("prepare");
     try {
-      // createOrder 内部会 usdc.transferFrom，余额不足会被 tUSDC 以
+      // createOrder 内部会 usdc.transferFrom，余额不足会被 atUSDC 以
       // InsufficientBalance(0xf4d678b8) revert。水龙头可重复领取，
       // 余额不够时自动补领（每单上限 5 次，防止死循环烧 gas）。
       // 每一步都同步 busy，左侧步骤条就能跟着钱包操作一步步走。
@@ -312,11 +372,14 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
 
       if (balance < total) {
         throw new Error(
-          `tUSDC 余额不足：当前 ${formatUnits(balance, 6)}，本单需要 ${formatUnits(total, 6)}`
+          interpolate(getDict(activeLocale()).errors.insufficientBalance, {
+            balance: formatUnits(balance, 6),
+            total: formatUnits(total, 6),
+          })
         );
       }
 
-      // 授权不足会被 tUSDC 以 InsufficientAllowance(0x13be252b) revert，
+      // 授权不足会被 atUSDC 以 InsufficientAllowance(0x13be252b) revert，
       // 所以支付前先确保额度够
       let allowance = await readAllowance();
 
@@ -356,7 +419,7 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
       // 会让 settle 直接 revert UnknownOrder，整条发券链路全废。
       const finalOrderId = receipt ? orderIdFromReceipt(receipt) : null;
       if (!finalOrderId) {
-        throw new Error("没能从交易回执里解析出订单号（缺少 OrderCreated 事件）");
+        throw new Error(getDict(activeLocale()).errors.noOrderId);
       }
 
       setOrderId(finalOrderId);
@@ -364,9 +427,12 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
       await refreshFunds();
 
       await registerOrder(finalOrderId, hash);
-      await watchSettlement(finalOrderId);
+      await       watchSettlement(finalOrderId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "支付失败");
+      console.error("[pay] 支付流程失败:", err);
+      setError(
+        err instanceof Error ? err.message : getDict(activeLocale()).errors.payFailed
+      );
       setBusy(null);
       await refreshFunds();
     }
@@ -387,10 +453,10 @@ export function useCheckout(params: { quote?: Quote; runId?: string }) {
   /** 根据当前状态决定下一步该做什么 */
   const nextAction = useMemo(() => {
     if (phase === "settling" || phase === "done") return null;
-    if (!isDeployed) return { label: "演示模式：模拟支付并分账", run: pay };
-    if (!isConnected) return { label: "连接钱包", run: () => {} };
-    return { label: "确认支付（approve + createOrder）", run: pay };
-  }, [isConnected, pay, phase]);
+    if (!isDeployed) return { label: t("errors.nextActionDemo"), run: pay };
+    if (!isConnected) return { label: t("errors.nextActionConnect"), run: () => {} };
+    return { label: t("errors.nextActionPay"), run: pay };
+  }, [isConnected, pay, phase, t]);
 
   return {
     stage,

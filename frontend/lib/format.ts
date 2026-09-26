@@ -1,7 +1,9 @@
 import { formatUnits } from "viem";
+import { getDict, interpolate } from "./i18n";
+import { INTL_TAG, type Locale } from "./i18n/config";
 import type { Address, Hex } from "./types";
 
-/** tUSDC 精度 */
+/** atUSDC 精度 */
 export const USDC_DECIMALS = 6;
 
 /** 最小单位 → 人类可读数字（不格式化千分位） */
@@ -74,14 +76,28 @@ export function formatDuration(minutes: number): string {
   return m === 0 ? `${h}h` : `${h}h${m}m`;
 }
 
-/** 秒级时间戳 → "2026-10-01" */
-export function formatDate(seconds: number): string {
+/** 毫秒时间戳 → "14:05"（缓存/更新时间用） */
+export function formatClock(timestamp: number, locale: Locale): string {
+  if (!timestamp) return "—";
+  return new Date(timestamp).toLocaleTimeString(INTL_TAG[locale], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** 秒级时间戳 → 本地化日期（zh: 2026/10/01，en: 10/01/2026） */
+export function formatDate(seconds: number, locale: Locale): string {
   if (!seconds) return "—";
-  return new Date(seconds * 1000).toLocaleDateString("zh-CN", {
+  return new Date(seconds * 1000).toLocaleDateString(INTL_TAG[locale], {
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
   });
+}
+
+/** 千分位数字（USD 金额、天数等） */
+export function formatNumber(value: number, locale: Locale): string {
+  return value.toLocaleString(INTL_TAG[locale]);
 }
 
 /** "2026-10-01" + n 天 → "2026-10-02" */
@@ -91,11 +107,19 @@ export function addDays(date: string, days: number): string {
   return base.toISOString().slice(0, 10);
 }
 
-/** 日期 → "10月01日 周四" */
-export function formatDayLabel(date: string): string {
+/** 日期 → zh: "10月01日 周四" / en: "Oct 01, Thu" */
+export function formatDayLabel(date: string, locale: Locale): string {
   const d = new Date(`${date}T00:00:00Z`);
-  const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][
-    d.getUTCDay()
-  ];
-  return `${d.getUTCMonth() + 1}月${String(d.getUTCDate()).padStart(2, "0")}日 ${weekday}`;
+  if (Number.isNaN(d.getTime())) return "—";
+
+  const dict = getDict(locale);
+  // zh 用数字月（模板里补「月/日」），en 用 Intl 的短月份名
+  const month =
+    locale === "en"
+      ? d.toLocaleDateString(INTL_TAG.en, { month: "short", timeZone: "UTC" })
+      : String(d.getUTCMonth() + 1);
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const weekday = dict.weekdays.split(",")[d.getUTCDay()] ?? "";
+
+  return interpolate(dict.monthDayFormat, { m: month, d: day, w: weekday });
 }

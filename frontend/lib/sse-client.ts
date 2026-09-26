@@ -5,6 +5,9 @@
  * 并且在 `run.done` / `run.error` 到达后要立刻释放 reader，避免悬挂连接。
  */
 
+import { getDict, interpolate } from "./i18n";
+import { DEFAULT_LOCALE, type Locale } from "./i18n/config";
+
 export type SSEHandlers<T> = {
   onEvent: (event: T) => void;
   onError?: (error: Error) => void;
@@ -52,12 +55,14 @@ function extractData(frame: string): string | null {
  * @param init fetch 参数（可带 method/body/headers）
  * @param handlers 事件回调
  * @param signal 取消信号
+ * @param locale 错误消息语言
  */
 export async function consumeSSE<T>(
   url: string,
   init: RequestInit,
   handlers: SSEHandlers<T>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  locale: Locale = DEFAULT_LOCALE
 ): Promise<void> {
   const { onEvent, onError, onDone } = handlers;
 
@@ -78,7 +83,11 @@ export async function consumeSSE<T>(
   }
 
   if (!response.ok || !response.body) {
-    onError?.(new Error(`SSE 连接失败：HTTP ${response.status}`));
+    onError?.(
+      new Error(
+        interpolate(getDict(locale).errors.sseFailed, { status: response.status })
+      )
+    );
     return;
   }
 

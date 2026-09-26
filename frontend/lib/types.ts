@@ -13,12 +13,10 @@ export type Hex = `0x${string}`;
 /** 0 机票 / 1 酒店 / 2 门票 / 3 餐饮 */
 export type CategoryCode = 0 | 1 | 2 | 3;
 
-export const CATEGORY_LABEL: Record<CategoryCode, string> = {
-  0: "机票",
-  1: "酒店",
-  2: "门票",
-  3: "餐饮",
-};
+/**
+ * 品类的展示名走 `lib/i18n/labels.ts` 的 `categoryLabel(code, locale)`。
+ * 这里不再维护语言相关的常量：types.ts 是前后端共享契约，不该掺入文案。
+ */
 
 export const CATEGORY_AGENT: Record<CategoryCode, string> = {
   0: "FlightAgent",
@@ -50,6 +48,10 @@ export interface TripRequest {
   rawText: string;
 }
 
+/**
+ * 表单默认需求。城市与偏好统一用中文规范名（后端目录就是中文），
+ * 展示层再按当前语言翻译，所以这里不要改成英文。
+ */
 export const DEFAULT_TRIP_REQUEST: TripRequest = {
   origin: "上海",
   destination: "东京",
@@ -194,13 +196,7 @@ export type Phase =
   | "budgeting"
   | "done";
 
-export const PHASE_LABEL: Record<Phase, string> = {
-  understanding: "理解需求",
-  sourcing: "向服务商询价",
-  planning: "编排行程",
-  budgeting: "核算预算",
-  done: "规划完成",
-};
+/** 阶段展示名见 `lib/i18n/labels.ts` 的 `phaseLabel(phase, locale)` */
 
 export const PHASE_ORDER: Phase[] = [
   "understanding",
@@ -291,3 +287,131 @@ export interface VoucherMetadata {
   /** 各品类的结构化明细 */
   details: Record<string, string>;
 }
+
+export type AgentKey = "flight" | "hotel" | "attraction" | "dining";
+
+export const AGENT_KEYS: AgentKey[] = ["flight", "hotel", "attraction", "dining"];
+
+/** AgentKey 展示名见 `lib/i18n/labels.ts` 的 `agentKeyLabel(key, locale)` */
+
+export const CATEGORY_TO_KEY: Record<CategoryCode, AgentKey> = {
+  0: "flight",
+  1: "hotel",
+  2: "attraction",
+  3: "dining",
+};
+
+export const KEY_TO_CATEGORY: Record<AgentKey, CategoryCode> = {
+  flight: 0,
+  hotel: 1,
+  attraction: 2,
+  dining: 3,
+};
+
+export const ALL_CATEGORIES: CategoryCode[] = [0, 1, 2, 3];
+
+export function categoriesFromMask(mask: number): CategoryCode[] {
+  return ALL_CATEGORIES.filter((code) => (mask & (1 << code)) !== 0);
+}
+
+export function maskFromCategories(categories: CategoryCode[]): number {
+  let mask = 0;
+  for (const code of categories) mask |= 1 << code;
+  return mask;
+}
+
+export function agentCovers(agent: { category: CategoryCode; categories?: CategoryCode[] }, code: CategoryCode): boolean {
+  const listed = agent.categories?.length ? agent.categories : [agent.category];
+  return listed.includes(code);
+}
+
+export type ProviderSelection = Partial<Record<AgentKey, Address[]>>;
+/** POST /api/runs 兼容旧的单个地址 */
+export type ProviderSelectionInput = Partial<Record<AgentKey, Address | Address[]>>;
+
+export type RecommendMode = "balanced" | "rating" | "price" | "value" | "budget";
+
+export const RECOMMEND_MODES: RecommendMode[] = ["balanced", "rating", "price", "value", "budget"];
+
+export const DEFAULT_RECOMMEND_MODE: RecommendMode = "balanced";
+
+/** 推荐策略展示名见 `lib/i18n/labels.ts` 的 `recommendModeLabel(mode, locale)` */
+
+export function parseRecommendMode(value: unknown): RecommendMode {
+  if (
+    value === "balanced" ||
+    value === "rating" ||
+    value === "price" ||
+    value === "value" ||
+    value === "budget"
+  ) {
+    return value;
+  }
+  return DEFAULT_RECOMMEND_MODE;
+}
+
+export function normalizeProviders(input?: ProviderSelectionInput | null): ProviderSelection {
+  const next: ProviderSelection = {};
+  if (!input) return next;
+  for (const key of AGENT_KEYS) {
+    const raw = input[key];
+    if (!raw) continue;
+    const list = (Array.isArray(raw) ? raw : [raw]).filter(Boolean);
+    if (list.length) next[key] = list;
+  }
+  return next;
+}
+
+export function hasProvider(selection: ProviderSelection, key: AgentKey, address: string): boolean {
+  return (selection[key] ?? []).some((item) => item.toLowerCase() === address.toLowerCase());
+}
+
+export function toggleProvider(
+  selection: ProviderSelection,
+  key: AgentKey,
+  address: Address
+): ProviderSelection {
+  const current = selection[key] ?? [];
+  const exists = current.some((item) => item.toLowerCase() === address.toLowerCase());
+  return {
+    ...selection,
+    [key]: exists
+      ? current.filter((item) => item.toLowerCase() !== address.toLowerCase())
+      : [...current, address],
+  };
+}
+
+export interface AgentProfile {
+  address: Address;
+  name: string;
+  category: CategoryCode;
+  /** 综合型服务商可同时覆盖多个分类 */
+  categories: CategoryCode[];
+  categoryMask: number;
+  endpoint: string;
+  active: boolean;
+  ratingAvg: number;
+  ratingCount: number;
+  ratingAvgX100: number;
+  /** 服务商简介，可为空 */
+  description: string;
+  /** 官网链接，可为空 */
+  website: string;
+}
+
+export const CATEGORY_ICON: Record<CategoryCode, string> = {
+  0: "✈",
+  1: "🏨",
+  2: "🎫",
+  3: "🍽",
+};
+
+export interface OnchainReview {
+  tokenId: string;
+  reviewer: Address;
+  provider: Address;
+  score: number;
+  comment: string;
+  timestamp: number;
+}
+

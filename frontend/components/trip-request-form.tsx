@@ -1,76 +1,41 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { DemoDisclaimer } from "./demo-badge";
-import { DEFAULT_TRIP_REQUEST, type TripRequest } from "@/lib/types";
-
-const EXAMPLES = [
-  "上海去东京 5 天、两人、预算 8000、想吃好少走路",
-  "深圳飞新加坡 4 天、一家三口、预算 12000、想轻松点",
-  "北京出发曼谷 6 天、两人、预算 6000、爱逛夜市",
-];
-
-/** 与后端 mock/catalog.ts 的 ORIGIN_AIRPORTS 保持一致 */
-const ORIGINS = ["上海", "北京", "广州", "深圳", "香港"];
-
-const DESTINATIONS = ["东京", "新加坡", "曼谷"];
-
-const PREFERENCES = ["想吃好", "少走路", "亲子", "购物", "夜景", "博物馆", "夜市"];
-
-/** 偏好关键词 → 偏好标签（按顺序匹配 chips 列表） */
-const PREFERENCE_KEYWORDS: [RegExp, string][] = [
-  [/吃好|美食/, "想吃好"],
-  [/少走路|省力/, "少走路"],
-  [/亲子|带娃|孩子/, "亲子"],
-  [/购物|买买买/, "购物"],
-  [/夜景|夜生活/, "夜景"],
-  [/博物馆|美术馆|展览/, "博物馆"],
-  [/夜市/, "夜市"],
-];
-
-const CN_NUM: Record<string, number> = {
-  一: 1, 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
-};
-
-const clamp = (n: number, min: number, max: number) =>
-  Math.min(max, Math.max(min, n));
-
-/**
- * 轻量解析自然语言需求（如「北京出发曼谷 6 天、两人、预算 6000、爱逛夜市」），
- * 只在对应字段能匹配到时才返回该字段，避免覆盖用户已填内容。
- */
-export function parseTripText(text: string): Partial<TripRequest> {
-  const result: Partial<TripRequest> = {};
-
-  const route = text.match(/([\u4e00-\u9fa5]{2,4})(?:出发|飞|去)([\u4e00-\u9fa5]{2,5})/);
-  if (route) {
-    if (ORIGINS.includes(route[1]!)) result.origin = route[1];
-    result.destination = route[2]!;
-  }
-
-  const days = text.match(/(\d+)\s*天/);
-  if (days) result.days = clamp(Number(days[1]), 1, 14);
-
-  if (/一家三口|两大一小|三口/.test(text)) {
-    result.pax = 3;
-  } else {
-    const cnPax = text.match(/([\u4e00-\u9fa5])\s*人/);
-    const numPax = text.match(/(\d+)\s*人/);
-    if (numPax) result.pax = clamp(Number(numPax[1]), 1, 12);
-    else if (cnPax && CN_NUM[cnPax[1]!]) result.pax = CN_NUM[cnPax[1]!];
-  }
-
-  const budget = text.match(/预算\s*([\d,]+)/);
-  if (budget) result.budget = Number(budget[1]!.replace(/,/g, "")) || result.budget;
-
-  const prefs = PREFERENCE_KEYWORDS
-    .filter(([re]) => re.test(text))
-    .map(([, pref]) => pref);
-  // 完整需求句（含出发地/目的地）出现时整体重置偏好，避免残留上一条的偏好
-  if (prefs.length || route) result.preferences = prefs;
-
-  return result;
-}
+import {
+  AGENT_KEYS,
+  DEFAULT_RECOMMEND_MODE,
+  RECOMMEND_MODES,
+  agentCovers,
+  hasProvider,
+  toggleProvider,
+  KEY_TO_CATEGORY,
+  type Address,
+  type AgentKey,
+  type AgentProfile,
+  type ProviderSelection,
+  type RecommendMode,
+  type TripRequest,
+} from "@/lib/types";
+import {
+  clearStoredProviders,
+  readStoredAutoProviders,
+  readStoredProviders,
+  readStoredRecommendMode,
+  writeStoredAutoProviders,
+  writeStoredProviders,
+  writeStoredRecommendMode,
+} from "@/lib/provider-selection";
+import { compareAgentsByMode } from "@/lib/recommend";
+import { useAgents } from "@/hooks/use-agents";
+import { useT } from "@/lib/i18n/context";
+import { agentKeyLabel, defaultTripRequest, recommendModeHint, recommendModeLabel, recommendModeShort } from "@/lib/i18n/labels";
+import {
+  demoText,
+  displayCity,
+  preferenceDisplay,
+} from "@/lib/i18n/dictionaries/demo";
+import { parseTripText } from "@/lib/trip-parse";
 
 function Field({
   label,
@@ -95,19 +60,81 @@ export function TripRequestForm({
   running,
   initialRequest,
 }: {
-  onSubmit: (request: TripRequest) => void;
+  onSubmit: (request: TripRequest, providers: ProviderSelection, recommendMode: RecommendMode) => void;
   running: boolean;
-  /** 切换分类页回来时恢复上一次填写/提交的需求 */
   initialRequest?: TripRequest;
 }) {
-  const [request, setRequest] = useState<TripRequest>(initialRequest ?? DEFAULT_TRIP_REQUEST);
+  const { t, locale } = useT();
+  const demo = demoText(locale);
+  const [request, setRequest] = useState<TripRequest>(
+    () => initialRequest ?? defaultTripRequest(locale)
+  );
+  const [autoAll, setAutoAll] = useState(true);
+  const [manual, setManual] = useState<ProviderSelection>({});
+  const [recommendMode, setRecommendMode] = useState<RecommendMode>(DEFAULT_RECOMMEND_MODE);
+  const [openKey, setOpenKey] = useState<AgentKey | null>(null);
+  const [providersOpen, setProvidersOpen] = useState(false);
+  const { agents } = useAgents();
+
+  useEffect(() => {
+    // 默认「自动询价全部」；只有用户显式切到手动过，才恢复上次的手动选择
+    if (readStoredAutoProviders()) {
+      setAutoAll(true);
+    } else {
+      setAutoAll(false);
+      setManual(readStoredProviders());
+      setProvidersOpen(true);
+    }
+    setRecommendMode(readStoredRecommendMode());
+  }, []);
+
+  const defaults = useMemo(() => {
+    const next: ProviderSelection = {};
+    for (const key of AGENT_KEYS) {
+      const listed = agents
+        .filter((agent) => agent.active && agentCovers(agent, KEY_TO_CATEGORY[key]))
+        .sort((a, b) => compareAgentsByMode(a, b, recommendMode === "rating" ? "rating" : "balanced"));
+      if (listed.length) next[key] = listed.map((agent) => agent.address);
+    }
+    return next;
+  }, [agents, recommendMode]);
+
+  const selected: ProviderSelection = autoAll ? defaults : { ...defaults, ...manual };
+
+  const totalPicked = AGENT_KEYS.reduce((sum, key) => sum + (selected[key]?.length ?? 0), 0);
+
+  const patchRecommendMode = (mode: RecommendMode) => {
+    setRecommendMode(mode);
+    writeStoredRecommendMode(mode);
+  };
+
+  const patchProvider = (key: AgentKey, address: Address) => {
+    setAutoAll(false);
+    writeStoredAutoProviders(false);
+    const next = toggleProvider(selected, key, address);
+    setManual(next);
+    writeStoredProviders(next);
+  };
+
+  /** 切到手动：以当前的「全部」为起点，方便逐个取消；切回自动：清掉手动痕迹 */
+  const patchAutoAll = (next: boolean) => {
+    setAutoAll(next);
+    writeStoredAutoProviders(next);
+    if (next) {
+      setManual({});
+      clearStoredProviders();
+    } else {
+      setManual(selected);
+      writeStoredProviders(selected);
+    }
+  };
 
   const patch = (next: Partial<TripRequest>) =>
     setRequest((prev) => ({ ...prev, ...next }));
 
   /** 上方文本（输入/示例）变化时，同步解析出下方参数 */
   const applyText = (text: string) =>
-    setRequest((prev) => ({ ...prev, ...parseTripText(text), rawText: text }));
+    setRequest((prev) => ({ ...prev, ...parseTripText(text, locale), rawText: text }));
 
   return (
     <div className="flex flex-col gap-4">
@@ -115,19 +142,19 @@ export function TripRequestForm({
         <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-brand-100 text-base">
           💬
         </span>
-        <h2 className="font-display text-lg font-bold text-ink-900">说出你的旅行</h2>
+        <h2 className="font-display text-lg font-bold text-ink-900">{t("form.title")}</h2>
       </div>
 
       <textarea
         value={request.rawText}
         onChange={(event) => applyText(event.target.value)}
         rows={4}
-        placeholder="例如：上海去东京 5 天、两人、预算 8000、想吃好少走路"
+        placeholder={t("form.placeholder")}
         className="w-full resize-none rounded-2xl border border-brand-100 bg-white px-4 py-3 text-sm leading-6 text-ink-900 outline-none transition-all placeholder:text-ink-100 focus:border-brand-400 focus:shadow-glow"
       />
 
       <div className="flex flex-wrap gap-2">
-        {EXAMPLES.map((example) => (
+        {demo.examples.map((example) => (
           <button
             key={example}
             type="button"
@@ -141,45 +168,47 @@ export function TripRequestForm({
 
       <div className="rounded-2xl border border-brand-100 bg-white/70 p-4">
         <p className="mb-3 text-xs font-bold tracking-wide text-ink-300">
-          解析出的参数（可直接改）
+          {t("form.parsedTitle")}
         </p>
 
         <div className="grid grid-cols-2 gap-3">
-          <Field label="出发地">
+          <Field label={t("form.origin")}>
             <select
               className={inputClass}
               value={request.origin}
               onChange={(event) => patch({ origin: event.target.value })}
             >
-              {ORIGINS.map((city) => (
+              {demo.origins.map((city) => (
                 <option key={city} value={city}>
-                  {city}
+                  {displayCity(city, locale)}
                 </option>
               ))}
-              {!ORIGINS.includes(request.origin) ? (
-                <option value={request.origin}>{request.origin}</option>
+              {!demo.origins.includes(request.origin) ? (
+                <option value={request.origin}>{displayCity(request.origin, locale)}</option>
               ) : null}
             </select>
           </Field>
 
-          <Field label="目的地">
+          <Field label={t("form.destination")}>
             <select
               className={inputClass}
               value={request.destination}
               onChange={(event) => patch({ destination: event.target.value })}
             >
-              {DESTINATIONS.map((city) => (
+              {demo.destinations.map((city) => (
                 <option key={city} value={city}>
-                  {city}
+                  {displayCity(city, locale)}
                 </option>
               ))}
-              {!DESTINATIONS.includes(request.destination) ? (
-                <option value={request.destination}>{request.destination}</option>
+              {!demo.destinations.includes(request.destination) ? (
+                <option value={request.destination}>
+                  {displayCity(request.destination, locale)}
+                </option>
               ) : null}
             </select>
           </Field>
 
-          <Field label="出发日期">
+          <Field label={t("form.startDate")}>
             <input
               type="date"
               className={inputClass}
@@ -188,7 +217,7 @@ export function TripRequestForm({
             />
           </Field>
 
-          <Field label="天数">
+          <Field label={t("form.days")}>
             <input
               type="number"
               min={1}
@@ -199,7 +228,7 @@ export function TripRequestForm({
             />
           </Field>
 
-          <Field label="人数">
+          <Field label={t("form.pax")}>
             <input
               type="number"
               min={1}
@@ -210,7 +239,7 @@ export function TripRequestForm({
             />
           </Field>
 
-          <Field label="预算（USD）">
+          <Field label={t("form.budget")}>
             <input
               type="number"
               min={0}
@@ -223,9 +252,11 @@ export function TripRequestForm({
         </div>
 
         <div className="mt-3">
-          <p className="mb-2 text-xs font-bold tracking-wide text-ink-300">偏好</p>
+          <p className="mb-2 text-xs font-bold tracking-wide text-ink-300">
+            {t("form.preferences")}
+          </p>
           <div className="flex flex-wrap gap-2">
-            {PREFERENCES.map((pref) => {
+            {demo.preferences.map((pref) => {
               const active = request.preferences.includes(pref);
               return (
                 <button
@@ -244,7 +275,7 @@ export function TripRequestForm({
                       : "border-brand-100 bg-white text-ink-500 hover:border-brand-300"
                   }`}
                 >
-                  {pref}
+                  {preferenceDisplay(pref, locale)}
                 </button>
               );
             })}
@@ -252,16 +283,209 @@ export function TripRequestForm({
         </div>
       </div>
 
+      <div className="rounded-2xl border border-brand-100 bg-white/70 p-4">
+        <button
+          type="button"
+          onClick={() => setProvidersOpen((prev) => !prev)}
+          aria-expanded={providersOpen}
+          className="flex w-full cursor-pointer items-center justify-between gap-2"
+        >
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="text-xs font-bold tracking-wide text-ink-300">
+              {t("form.providers")}
+            </span>
+            <span className="shrink-0 rounded-full bg-brand-50 px-1.5 py-0.5 text-[10px] font-bold text-brand-700">
+              {t("form.providerCount", {
+                mode: autoAll ? t("form.auto") : t("form.manual"),
+                n: totalPicked,
+              })}
+            </span>
+          </span>
+          <span
+            className={`shrink-0 text-xs text-ink-300 transition-transform duration-200 ${
+              providersOpen ? "rotate-180" : ""
+            }`}
+          >
+            ▾
+          </span>
+        </button>
+
+        <div className="mt-3">
+          <div className="mb-1.5 flex items-baseline justify-between gap-2">
+            <p className="text-[11px] font-bold tracking-wide text-ink-300">
+              {t("form.recommendMode")}
+            </p>
+            <p className="text-[11px] font-bold text-brand-700">
+              {recommendModeLabel(recommendMode, locale)}
+            </p>
+          </div>
+          <div className="grid grid-cols-5 gap-1 rounded-xl border border-brand-100 bg-white p-1">
+            {RECOMMEND_MODES.map((mode) => {
+              const active = recommendMode === mode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  title={recommendModeLabel(mode, locale)}
+                  aria-pressed={active}
+                  onClick={() => patchRecommendMode(mode)}
+                  className={`flex cursor-pointer flex-col items-center gap-1 rounded-[10px] px-0.5 py-1.5 transition-all ${
+                    active ? "sky-gradient text-white shadow-soft" : "text-ink-500 hover:bg-brand-50"
+                  }`}
+                >
+                  <span className="text-[13px] leading-none">{RECOMMEND_MODE_ICON[mode]}</span>
+                  <span className="whitespace-nowrap text-[10px] font-bold leading-none">
+                    {recommendModeShort(mode, locale)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-1.5 text-[11px] leading-4 text-ink-300">
+            {recommendModeHint(recommendMode, locale)}
+          </p>
+        </div>
+
+        {providersOpen ? (
+          <div className="mt-3 animate-fade-up border-t border-brand-100 pt-3">
+            <label className="flex cursor-pointer items-start justify-between gap-2 rounded-xl border border-brand-100 bg-white px-3 py-2">
+              <span className="min-w-0">
+                <span className="block text-xs font-bold text-ink-800">{t("form.autoAll")}</span>
+                <span className="block text-[11px] leading-4 text-ink-300">
+                  {t("form.autoAllHint")}
+                </span>
+              </span>
+              <input
+                type="checkbox"
+                checked={autoAll}
+                onChange={(event) => patchAutoAll(event.target.checked)}
+                className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-brand-600"
+              />
+            </label>
+
+            <div className="mt-3 grid grid-cols-1 gap-3">
+              {AGENT_KEYS.map((key) => {
+                const listed = agents
+                  .filter((agent) => agent.active && agentCovers(agent, KEY_TO_CATEGORY[key]))
+                  .sort((a, b) =>
+                    compareAgentsByMode(a, b, recommendMode === "rating" ? "rating" : "balanced")
+                  );
+                const picked = selected[key] ?? [];
+                const open = openKey === key;
+                return (
+                  <div key={key}>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <span className="text-xs font-bold tracking-wide text-ink-300">
+                        {agentKeyLabel(key, locale)}
+                      </span>
+                      <span className="text-[11px] font-semibold text-ink-300">
+                        {t("form.pickedCount", { n: picked.length })}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {picked.map((address) => {
+                        const agent = listed.find(
+                          (item) => item.address.toLowerCase() === address.toLowerCase()
+                        );
+                        return (
+                          <button
+                            key={address}
+                            type="button"
+                            onClick={() => patchProvider(key, address)}
+                            className="cursor-pointer rounded-full sky-gradient px-2.5 py-1 text-[11px] font-bold text-white"
+                          >
+                            {agent?.name ?? address.slice(0, 6)}
+                            {agent?.ratingCount ? ` ★${agent.ratingAvg.toFixed(1)}` : ""} ×
+                          </button>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        disabled={listed.length === 0}
+                        onClick={() => setOpenKey(open ? null : key)}
+                        className="cursor-pointer rounded-full border border-brand-200 bg-white px-2.5 py-1 text-[11px] font-bold text-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        {listed.length === 0
+                          ? t("form.noAgent")
+                          : open
+                            ? t("form.collapse")
+                            : t("form.addAgent")}
+                      </button>
+                    </div>
+                    {open ? (
+                      <ul className="mt-2 flex flex-col gap-1 rounded-xl border border-brand-100 bg-white p-2">
+                        {listed.map((agent) => (
+                          <AgentCheckRow
+                            key={agent.address}
+                            agent={agent}
+                            checked={hasProvider(selected, key, agent.address)}
+                            onToggle={() => patchProvider(key, agent.address)}
+                          />
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
       <button
         type="button"
         disabled={running}
-        onClick={() => onSubmit(request)}
+        onClick={() => onSubmit(request, selected, recommendMode)}
         className="sky-gradient flex h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-2xl text-base font-bold text-white shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-glow disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {running ? "Agent 规划中…" : "开始规划 ✈"}
+        {running ? t("form.running") : t("form.start")}
       </button>
 
       <DemoDisclaimer />
     </div>
+  );
+}
+
+/** 推荐策略图标不随语言变 */
+const RECOMMEND_MODE_ICON: Record<RecommendMode, string> = {
+  balanced: "✦",
+  rating: "★",
+  price: "¥",
+  value: "⚖",
+  budget: "◎",
+};
+
+function AgentCheckRow({
+  agent,
+  checked,
+  onToggle,
+}: {
+  agent: AgentProfile;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useT();
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-brand-50"
+      >
+        <span
+          className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[10px] font-bold ${
+            checked ? "border-brand-500 bg-brand-500 text-white" : "border-brand-200 bg-white text-transparent"
+          }`}
+        >
+          ✓
+        </span>
+        <span className="min-w-0 flex-1 truncate text-xs font-bold text-ink-800">{agent.name}</span>
+        <span className="shrink-0 text-[11px] text-ink-300">
+          {agent.ratingCount
+            ? `★${agent.ratingAvg.toFixed(1)} (${agent.ratingCount})`
+            : t("units.noRating")}
+        </span>
+      </button>
+    </li>
   );
 }

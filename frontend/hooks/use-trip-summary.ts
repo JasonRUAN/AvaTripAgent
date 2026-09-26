@@ -2,6 +2,8 @@
 
 import { useCallback, useState } from "react";
 import { BACKEND_URL } from "@/lib/contracts";
+import { useT } from "@/lib/i18n/context";
+import { categoryLabel } from "@/lib/i18n/labels";
 import type { TripGroup } from "./use-vouchers";
 
 /**
@@ -20,32 +22,28 @@ export interface TripSummary {
   source?: "llm" | "offline";
 }
 
-const CATEGORY_LABELS: Record<number, string> = {
-  0: "机票",
-  1: "酒店",
-  2: "门票",
-  3: "餐饮",
-};
-
 const cache = new Map<string, TripSummary>();
 
 export function getCachedTripSummary(orderId: string): TripSummary | null {
   return cache.get(orderId) ?? null;
 }
 
-function buildPayload(trip: TripGroup) {
+/** 品类标签走 categoryLabel(locale)；这里只是往后端 payload 里塞一份可读标签 */
+function buildPayload(trip: TripGroup, locale: ReturnType<typeof useT>["locale"]) {
   return {
     tripId: trip.title,
     dateLabel: trip.dateLabel,
+    locale,
     vouchers: trip.vouchers.map((voucher) => ({
       title: voucher.metadata?.name ?? voucher.title,
-      categoryLabel: CATEGORY_LABELS[voucher.category] ?? "其他",
+      categoryLabel: categoryLabel(voucher.category, locale),
       details: voucher.metadata?.details ?? {},
     })),
   };
 }
 
 export function useTripSummary(trip: TripGroup) {
+  const { t, locale } = useT();
   const [summary, setSummary] = useState<TripSummary | null>(
     () => cache.get(trip.orderId) ?? null
   );
@@ -61,7 +59,7 @@ export function useTripSummary(trip: TripGroup) {
       const response = await fetch(`${BACKEND_URL}/api/ai/trip-summary`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(buildPayload(trip)),
+        body: JSON.stringify(buildPayload(trip, locale)),
       });
 
       if (!response.ok) {
@@ -69,7 +67,7 @@ export function useTripSummary(trip: TripGroup) {
           .json()
           .catch(() => null)) as { message?: string } | null;
         throw new Error(
-          payload?.message ?? `行程总结生成失败（HTTP ${response.status}）`
+          payload?.message ?? t("errors.summaryHttp", { status: response.status })
         );
       }
 
@@ -78,12 +76,12 @@ export function useTripSummary(trip: TripGroup) {
       setSummary(data);
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : "AI 行程总结生成失败，请稍后重试"
+        cause instanceof Error ? cause.message : t("errors.summaryFailed")
       );
     } finally {
       setLoading(false);
     }
-  }, [trip, loading]);
+  }, [trip, loading, locale, t]);
 
   return { summary, loading, error, generate };
 }

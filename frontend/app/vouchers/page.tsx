@@ -6,9 +6,13 @@ import { DemoBadge } from "@/components/demo-badge";
 import { TripCard } from "@/components/trip-card";
 import { WalletButton } from "@/components/wallet-button";
 import { useVouchers } from "@/hooks/use-vouchers";
+import { formatClock } from "@/lib/format";
+import { useT } from "@/lib/i18n/context";
 
 export default function VouchersPage() {
-  const { address, items, trips, stats, loading, error, refresh } = useVouchers();
+  const { address, items, trips, stats, loading, refreshing, updatedAt, error, refresh } =
+    useVouchers();
+  const { t, locale } = useT();
 
   // 默认只展开最新一趟行程（列表首位），其余折叠；
   // manual 里只记录用户手动切换过的行程，后读取到的行程仍按默认规则。
@@ -33,11 +37,10 @@ export default function VouchersPage() {
       <main className="mx-auto flex w-full max-w-3xl flex-col items-center gap-4 px-4 py-20 text-center">
         <span className="text-5xl animate-drift">🎫</span>
         <h1 className="font-display text-2xl font-bold text-brand-gradient">
-          我的凭证
+          {t("vouchersPage.title")}
         </h1>
         <p className="max-w-md text-sm leading-6 text-ink-500">
-          连接钱包后，这里会显示由各家服务商 Agent 签发到你的地址的机票 / 酒店 / 门票 /
-          餐饮凭证 NFT。
+          {t("vouchersPage.connectHint")}
         </p>
         <WalletButton />
       </main>
@@ -49,11 +52,16 @@ export default function VouchersPage() {
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl font-bold tracking-tight text-brand-gradient">
-            我的凭证
+            {t("vouchersPage.title")}
           </h1>
-          <p className="mt-1 text-xs text-ink-500">
-            每张凭证都是 Avalanche Fuji 上的 ERC-721，二维码可直接给商户扫码核销
-          </p>
+          <p className="mt-1 text-xs text-ink-500">{t("vouchersPage.subtitle")}</p>
+          {/* 列表来自缓存时说清楚，避免用户以为状态没更新 */}
+          {updatedAt && !loading ? (
+            <p className="mt-0.5 text-[11px] text-ink-300">
+              {t("vouchersPage.readAt", { time: formatClock(updatedAt, locale) })}
+              {refreshing ? t("vouchersPage.syncing") : null}
+            </p>
+          ) : null}
         </div>
         <div className="flex items-center gap-2">
           {error ? <DemoBadge tone="warn" label={error} /> : null}
@@ -63,25 +71,41 @@ export default function VouchersPage() {
               onClick={toggleAll}
               className="cursor-pointer rounded-full border border-brand-200 bg-white/90 px-3.5 py-2 text-xs font-bold text-ink-700 shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-lift"
             >
-              {allCollapsed ? "全部展开" : "全部收起"}
+              {allCollapsed ? t("vouchersPage.expandAll") : t("vouchersPage.collapseAll")}
             </button>
           ) : null}
           <button
             type="button"
             onClick={refresh}
-            disabled={loading}
+            disabled={loading || refreshing}
             className="cursor-pointer rounded-full border border-brand-200 bg-white/90 px-3.5 py-2 text-xs font-bold text-ink-700 shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-lift disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {loading ? "读取中…" : "刷新链上数据"}
+            {loading
+              ? t("vouchersPage.loading")
+              : refreshing
+                ? t("vouchersPage.verifying")
+                : t("vouchersPage.refresh")}
           </button>
         </div>
       </div>
 
       <div className="mb-5 grid grid-cols-3 gap-3">
         {[
-          { label: "有效", value: stats.issued, tone: "text-mint-500" },
-          { label: "已核销", value: stats.redeemed, tone: "text-ink-500" },
-          { label: "已作废", value: stats.voided, tone: "text-coral-500" },
+          {
+            label: t("vouchersPage.statIssued"),
+            value: stats.issued,
+            tone: "text-mint-500",
+          },
+          {
+            label: t("vouchersPage.statRedeemed"),
+            value: stats.redeemed,
+            tone: "text-ink-500",
+          },
+          {
+            label: t("vouchersPage.statVoided"),
+            value: stats.voided,
+            tone: "text-coral-500",
+          },
         ].map((item) => (
           <div
             key={item.label}
@@ -106,7 +130,9 @@ export default function VouchersPage() {
       {!loading && error ? (
         <div className="rounded-3xl border border-dashed border-coral-200 bg-white/60 px-6 py-14 text-center">
           <span className="text-4xl">⚠️</span>
-          <p className="mt-3 text-sm font-bold text-ink-700">链上凭证读取失败</p>
+          <p className="mt-3 text-sm font-bold text-ink-700">
+            {t("vouchersPage.loadFailed")}
+          </p>
           <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-ink-500">
             {error}
           </p>
@@ -115,7 +141,7 @@ export default function VouchersPage() {
             onClick={refresh}
             className="mt-4 cursor-pointer rounded-full sky-gradient px-4 py-2 text-xs font-bold text-white shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-glow"
           >
-            重新读取
+            {t("vouchersPage.retry")}
           </button>
         </div>
       ) : null}
@@ -123,18 +149,15 @@ export default function VouchersPage() {
       {!loading && !error && items.length === 0 ? (
         <div className="rounded-3xl border border-dashed border-brand-200 bg-white/60 px-6 py-14 text-center">
           <span className="text-4xl">🎫</span>
-          <p className="mt-3 text-sm font-bold text-ink-700">
-            该地址还没有链上凭证
-          </p>
+          <p className="mt-3 text-sm font-bold text-ink-700">{t("vouchersPage.empty")}</p>
           <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-ink-500">
-            完成一次行程支付并分账后，服务商 Agent 会把机票 / 酒店 / 门票 /
-            餐饮凭证签发到这个地址。
+            {t("vouchersPage.emptyHint")}
           </p>
           <Link
             href="/"
             className="mt-4 inline-block rounded-full sky-gradient px-4 py-2 text-xs font-bold text-white shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-glow"
           >
-            去规划行程
+            {t("vouchersPage.goPlan")}
           </Link>
         </div>
       ) : null}

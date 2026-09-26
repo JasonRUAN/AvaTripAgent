@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { toolLabel, type ToolCall } from "@/hooks/use-plan-run";
+import { useT } from "@/lib/i18n/context";
+import { toolLabel } from "@/lib/i18n/labels";
+import type { ToolCall } from "@/hooks/use-plan-run";
 
 const ICON: Record<string, string> = {
   search_flights: "✈️",
@@ -19,6 +21,7 @@ function argText(args: Record<string, unknown>): string {
 
 export function ToolCallCard({ call }: { call: ToolCall }) {
   const [open, setOpen] = useState(false);
+  const { t, locale } = useT();
   const pending = call.ms === undefined;
 
   return (
@@ -33,17 +36,17 @@ export function ToolCallCard({ call }: { call: ToolCall }) {
         <span className="font-mono text-xs font-bold text-brand-700">
           {call.name}
         </span>
-        <span className="text-xs text-ink-300">{toolLabel(call.name)}</span>
+        <span className="text-xs text-ink-300">{toolLabel(call.name, locale)}</span>
 
         <span className="ml-auto flex items-center gap-2">
           {pending ? (
             <span className="flex items-center gap-1.5 rounded-full bg-brand-50 px-2 py-0.5 text-[11px] font-bold text-brand-600">
               <span className="h-1.5 w-1.5 rounded-full bg-brand-500 animate-breathe" />
-              调用中
+              {t("toolCard.calling")}
             </span>
           ) : (
             <span className="rounded-full bg-mint-100 px-2 py-0.5 text-[11px] font-bold text-mint-500">
-              {call.ms}ms · {call.count ?? 0} 条
+              {t("toolCard.result", { ms: call.ms ?? 0, count: call.count ?? 0 })}
             </span>
           )}
           <span
@@ -57,7 +60,7 @@ export function ToolCallCard({ call }: { call: ToolCall }) {
       {open ? (
         <div className="border-t border-brand-100 bg-brand-50/60 px-3 py-2 animate-fade-up">
           <p className="font-mono text-[11px] leading-5 text-ink-500">
-            {argText(call.args) || "无参数"}
+            {argText(call.args) || t("toolCard.noArgs")}
           </p>
         </div>
       ) : null}

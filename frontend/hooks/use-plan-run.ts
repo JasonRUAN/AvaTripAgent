@@ -3,7 +3,8 @@
 import { useCallback, useRef, useSyncExternalStore } from "react";
 import { consumeSSE } from "@/lib/sse-client";
 import { buildDemoEvents } from "@/lib/demo-fixture";
-import { BACKEND_URL } from "@/lib/contracts";
+import { useLocale } from "@/lib/i18n/context";
+import type { Locale } from "@/lib/i18n/config";
 import {
   PLAN_CACHE_KEY,
   clearCheckoutSnapshot,
@@ -11,8 +12,25 @@ import {
   removeSession,
   writeSession,
 } from "@/lib/session-cache";
+import { BACKEND_URL } from "@/lib/contracts";
+import {
+  applySelection,
+  fillDay,
+  offerIdsOf,
+  placementsFromDays,
+  quoteFromSelection,
+  recommendedOfferIds,
+  type OfferKind,
+} from "@/lib/offer-selection";
+import {
+  pickRecommendedIds,
+  sameIdSet,
+  scoresFromAgents,
+  type ProviderScoreMap,
+} from "@/lib/recommend";
 import type {
   AttractionOffer,
+  AgentProfile,
   DiningOffer,
   FlightOffer,
   HotelOffer,
@@ -22,7 +40,10 @@ import type {
   StreamEvent,
   ToolName,
   TripRequest,
+  ProviderSelection,
+  RecommendMode,
 } from "@/lib/types";
+import { DEFAULT_RECOMMEND_MODE, DEFAULT_TRIP_REQUEST, parseRecommendMode } from "@/lib/types";
 
 export interface ToolCall {
   id: string;
@@ -56,6 +77,13 @@ export interface RunState {
     dining: DiningOffer[];
   };
   days: DayState[];
+  /** Agent 原始逐日行程，勾选增删都以它为底 */
+  baseDays: ItineraryDay[];
+  selectedOfferIds: string[];
+  recommendedOfferIds: string[];
+  recommendMode: RecommendMode;
+  /** offerId → 用户指定的天 index，避免勾选后被启发式挪走 */
+  offerPlacements: Record<string, number>;
   budget?: { total: number; items: { label: string; category: number; amount: number }[]; budget: number };
   quote?: Quote;
   error?: string;
@@ -70,19 +98,14 @@ const INITIAL: RunState = {
   toolCalls: [],
   offers: { flights: [], hotels: [], attractions: [], dining: [] },
   days: [],
+  baseDays: [],
+  selectedOfferIds: [],
+  recommendedOfferIds: [],
+  recommendMode: DEFAULT_RECOMMEND_MODE,
+  offerPlacements: {},
 };
 
-const TOOL_LABEL: Record<string, string> = {
-  search_flights: "查询航班",
-  search_hotels: "查询酒店",
-  search_attractions: "查询景点",
-  search_restaurants: "查询餐厅",
-  quote_total: "汇总报价",
-};
-
-export function toolLabel(name: string): string {
-  return TOOL_LABEL[name] ?? name;
-}
+/** 工具调用名的展示文案见 `lib/i18n/labels.ts` 的 `toolLabel(name, locale)` */
 
 // ---------------------------------------------------------------- 跨路由 store
 //
@@ -94,31 +117,176 @@ interface PlanStore {
   state: RunState;
   /** 最近一次提交的行程需求，用于切页后恢复左侧表单 */
   request: TripRequest | null;
+  providers: ProviderSelection;
+  recommendMode: RecommendMode;
 }
 
 /** SSR / hydration 阶段使用的固定快照 */
-const SERVER_STORE: PlanStore = { state: INITIAL, request: null };
+const SERVER_STORE: PlanStore = {
+  state: INITIAL,
+  request: null,
+  providers: {},
+  recommendMode: DEFAULT_RECOMMEND_MODE,
+};
 
 let cachedStore: PlanStore | null = null;
 
+function hydrateState(raw: RunState): RunState {
+  const baseDays = raw.baseDays ?? raw.days.flatMap((day) => (day.day ? [day.day] : []));
+  const recommended = raw.recommendedOfferIds ?? recommendedOfferIds(baseDays);
+  return {
+    ...INITIAL,
+    ...raw,
+    status: raw.status === "running" ? "done" : raw.status,
+    baseDays,
+    recommendMode: parseRecommendMode(raw.recommendMode),
+    recommendedOfferIds: recommended,
+    selectedOfferIds: raw.selectedOfferIds ?? recommended,
+    offerPlacements: raw.offerPlacements ?? placementsFromDays(raw.days.flatMap((day) => (day.day ? [day.day] : []))),
+  };
+}
+
 function loadStore(): PlanStore {
   if (cachedStore) return cachedStore;
-  const raw = readSession<{ state?: RunState; request?: TripRequest | null }>(PLAN_CACHE_KEY);
+  const raw = readSession<{
+    state?: RunState;
+    request?: TripRequest | null;
+    providers?: ProviderSelection;
+    recommendMode?: RecommendMode;
+  }>(PLAN_CACHE_KEY);
   if (raw?.state) {
-    // 整刷后旧的 SSE 消费者已不存在，running 快照定格为 done
-    const state: RunState =
-      raw.state.status === "running" ? { ...raw.state, status: "done" } : raw.state;
-    cachedStore = { state, request: raw.request ?? null };
+    const recommendMode = parseRecommendMode(raw.recommendMode ?? raw.state.recommendMode);
+    cachedStore = {
+      state: hydrateState({ ...raw.state, recommendMode }),
+      request: raw.request ?? null,
+      providers: raw.providers ?? {},
+      recommendMode,
+    };
     return cachedStore;
   }
-  cachedStore = { state: INITIAL, request: null };
+  cachedStore = {
+    state: INITIAL,
+    request: null,
+    providers: {},
+    recommendMode: DEFAULT_RECOMMEND_MODE,
+  };
   return cachedStore;
+}
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+function schedulePersist(): void {
+  const current = loadStore();
+  if (!current.state.runId || current.state.offline) return;
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    const latest = loadStore();
+    if (!latest.state.runId || latest.state.offline) return;
+    void fetch(`${BACKEND_URL}/api/runs/${latest.state.runId}/selection`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        selectedOfferIds: latest.state.selectedOfferIds,
+        days: latest.state.days.flatMap((day) => (day.day ? [day.day] : [])),
+        quote: latest.state.quote,
+      }),
+    }).catch(() => {
+      // 离线或后端未起时保持本地勾选即可
+    });
+  }, 400);
+}
+
+function offerBundleOf(offers: RunState["offers"]) {
+  return {
+    flights: offers.flights,
+    hotels: offers.hotels,
+    attractions: offers.attractions,
+    restaurants: offers.dining,
+  };
+}
+
+function recommendedFromStrategy(
+  state: RunState,
+  request: TripRequest | null,
+  mode: RecommendMode,
+  scores: ProviderScoreMap
+): string[] {
+  if (
+    state.offers.flights.length === 0 &&
+    state.offers.hotels.length === 0 &&
+    state.offers.attractions.length === 0 &&
+    state.offers.dining.length === 0
+  ) {
+    return recommendedOfferIds(state.baseDays.length ? state.baseDays : currentDaysOf(state));
+  }
+  return pickRecommendedIds(
+    offerBundleOf(state.offers),
+    mode,
+    request ?? DEFAULT_TRIP_REQUEST,
+    scores
+  );
+}
+
+function currentDaysOf(state: RunState): ItineraryDay[] {
+  const fromState = state.days.flatMap((day) => (day.day ? [day.day] : []));
+  return fromState.length > 0 ? fromState : state.baseDays;
+}
+
+function deriveFromSelection(
+  prev: RunState,
+  selectedIds: string[],
+  request: TripRequest | null,
+  locale: Locale,
+  placements = prev.offerPlacements
+): RunState {
+  const pax = request?.pax ?? DEFAULT_TRIP_REQUEST.pax;
+  const budget = request?.budget ?? prev.budget?.budget ?? DEFAULT_TRIP_REQUEST.budget;
+  const nextDays = applySelection(
+    currentDaysOf(prev),
+    selectedIds,
+    prev.offers,
+    pax,
+    locale,
+    request,
+    placements
+  );
+  const { quote, budgetItems } = quoteFromSelection({
+    selectedIds,
+    offers: prev.offers,
+    days: nextDays,
+    request: request ?? DEFAULT_TRIP_REQUEST,
+    locale,
+    previousQuote: prev.quote,
+  });
+
+  return {
+    ...prev,
+    selectedOfferIds: selectedIds,
+    offerPlacements: { ...placements, ...placementsFromDays(nextDays) },
+    days: nextDays.map((day) => {
+      const existing = prev.days.find((entry) => entry.index === day.index);
+      return existing
+        ? { ...existing, day }
+        : { index: day.index, date: day.date, theme: day.theme, text: "", day };
+    }),
+    quote,
+    budget: {
+      total: quote.totalUsd,
+      items: budgetItems,
+      budget,
+    },
+  };
 }
 
 const listeners = new Set<() => void>();
 
 function updateStore(recipe: (prev: PlanStore) => PlanStore): void {
-  cachedStore = recipe(loadStore());
+  const prev = loadStore();
+  const next = recipe(prev);
+  // recipe 返回原对象 = 本次没有任何变化。此时绝不能通知订阅者：
+  // 否则「effect 里写 store → 通知 → 重渲染 → effect 再写」会形成无限更新。
+  if (next === prev) return;
+  cachedStore = next;
   writeSession(PLAN_CACHE_KEY, cachedStore);
   for (const listener of listeners) listener();
 }
@@ -142,6 +310,7 @@ function subscribeStore(listener: () => void): () => void {
  *   2. SSE 中途报错且还没拿到报价单 → 播放 demo 事件补齐
  */
 export function usePlanRun() {
+  const { locale } = useLocale();
   const store = useSyncExternalStore(
     subscribeStore,
     loadStore,
@@ -216,8 +385,35 @@ export function usePlanRun() {
       case "budget.update":
         return { ...draft, budget: event as RunState["budget"] };
 
-      case "quote.ready":
-        return { ...draft, quote: event.quote };
+      case "quote.ready": {
+        const completed = draft.days.flatMap((day) => (day.day ? [day.day] : []));
+        const store = loadStore();
+        const mode = store.recommendMode;
+        const recommended = recommendedFromStrategy(
+          { ...draft, baseDays: draft.baseDays.length > 0 ? draft.baseDays : completed },
+          store.request,
+          mode,
+          {}
+        );
+        const fallback = recommendedOfferIds(completed);
+        const nextRecommended = recommended.length > 0 ? recommended : fallback;
+        const selected =
+          draft.selectedOfferIds.length > 0 ? draft.selectedOfferIds : nextRecommended;
+        return deriveFromSelection(
+          {
+            ...draft,
+            quote: event.quote,
+            recommendMode: mode,
+            baseDays: draft.baseDays.length > 0 ? draft.baseDays : completed,
+            recommendedOfferIds:
+              draft.recommendedOfferIds.length > 0 ? draft.recommendedOfferIds : nextRecommended,
+            selectedOfferIds: selected,
+          },
+          selected,
+          store.request,
+          locale
+        );
+      }
 
       case "run.degraded":
         return { ...draft, degraded: true };
@@ -231,36 +427,44 @@ export function usePlanRun() {
       default:
         return draft;
     }
-  }, []);
+  }, [locale]);
 
   /** 播放预置离线流（带节奏，观感接近真实 SSE） */
   const playOffline = useCallback(
     async (request: TripRequest) => {
       patchState((prev) => ({ ...prev, offline: true, status: "running", thought: "" }));
-      const events = buildDemoEvents(request);
+      // 离线流的文案（机场 / 酒店 / 每日主题 / 阶段提示）按当前语言生成
+      const events = buildDemoEvents(request, locale);
 
       for (const event of events) {
         await sleep(event.type === "agent.delta" ? 26 : 140);
         patchState((prev) => applyEvent(event, prev));
       }
     },
-    [applyEvent]
+    [applyEvent, locale]
   );
 
   const start = useCallback(
-    async (request: TripRequest) => {
+    async (request: TripRequest, providers?: ProviderSelection, recommendMode?: RecommendMode) => {
       abortRef.current?.abort();
       const controller = new AbortController();
       abortRef.current = controller;
+      const mode = parseRecommendMode(recommendMode);
 
-      updateStore((prev) => ({ ...prev, request, state: { ...INITIAL, status: "running" } }));
+      updateStore((prev) => ({
+        ...prev,
+        request,
+        providers: providers ?? {},
+        recommendMode: mode,
+        state: { ...INITIAL, status: "running", recommendMode: mode },
+      }));
 
       let runId: string | undefined;
       try {
         const response = await fetch(`${BACKEND_URL}/api/runs`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ request, rawText: request.rawText }),
+          body: JSON.stringify({ request, rawText: request.rawText, providers, recommendMode: mode }),
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(`后端返回 ${response.status}`);
@@ -285,29 +489,210 @@ export function usePlanRun() {
             if (!loadStore().state.quote) await playOffline(request);
           },
         },
-        controller.signal
+        controller.signal,
+        locale
       );
 
       // 流结束时若仍没有报价单（后端中途失败），补一遍离线流
-      patchState((prev) => {
-        if (prev.quote || prev.offline) return prev;
-        if (prev.status === "error") return prev;
-        void playOffline(request);
-        return prev;
-      });
+      const finished = loadStore().state;
+      if (!finished.quote && !finished.offline && finished.status !== "error") {
+        await playOffline(request);
+      }
     },
-    [applyEvent, playOffline]
+    [applyEvent, playOffline, locale]
   );
 
   /** 用户主动「重新规划」：清空规划与结算缓存 */
   const reset = useCallback(() => {
     abortRef.current?.abort();
     clearCheckoutSnapshot();
-    updateStore(() => ({ state: INITIAL, request: null }));
+    updateStore(() => ({
+      state: INITIAL,
+      request: null,
+      providers: {},
+      recommendMode: DEFAULT_RECOMMEND_MODE,
+    }));
     removeSession(PLAN_CACHE_KEY);
   }, []);
 
-  return { state: store.state, lastRequest: store.request, start, reset };
+  const toggleOffer = useCallback((id: string) => {
+    updateStore((prev) => {
+      const selected = new Set(prev.state.selectedOfferIds);
+      const placements = { ...prev.state.offerPlacements };
+      if (selected.has(id)) {
+        selected.delete(id);
+        delete placements[id];
+      } else {
+        selected.add(id);
+      }
+      return { ...prev, state: deriveFromSelection(prev.state, [...selected], prev.request, locale, placements) };
+    });
+    schedulePersist();
+  }, [locale]);
+
+  const setCategorySelection = useCallback((kind: OfferKind, mode: "all" | "none") => {
+    updateStore((prev) => {
+      const ids = offerIdsOf(prev.state.offers, kind);
+      const selected = new Set(prev.state.selectedOfferIds);
+      const placements = { ...prev.state.offerPlacements };
+      if (mode === "all") ids.forEach((id) => selected.add(id));
+      else {
+        ids.forEach((id) => {
+          selected.delete(id);
+          delete placements[id];
+        });
+      }
+      return { ...prev, state: deriveFromSelection(prev.state, [...selected], prev.request, locale, placements) };
+    });
+    schedulePersist();
+  }, [locale]);
+
+  const addOfferToDay = useCallback((dayIndex: number, offerId: string) => {
+    updateStore((prev) => {
+      const selected = new Set(prev.state.selectedOfferIds);
+      selected.add(offerId);
+      const placements = { ...prev.state.offerPlacements, [offerId]: dayIndex };
+      return { ...prev, state: deriveFromSelection(prev.state, [...selected], prev.request, locale, placements) };
+    });
+    schedulePersist();
+  }, [locale]);
+
+  const removeDayItem = useCallback((dayIndex: number, itemIndex: number) => {
+    updateStore((prev) => {
+      const days = currentDaysOf(prev.state).map((day) => ({
+        ...day,
+        items: [...day.items],
+      }));
+      const target = days.find((day) => day.index === dayIndex);
+      const item = target?.items[itemIndex];
+      if (!target || !item) return prev;
+
+      if (item.offerId) {
+        const selected = prev.state.selectedOfferIds.filter((id) => id !== item.offerId);
+        const placements = { ...prev.state.offerPlacements };
+        delete placements[item.offerId];
+        target.items.splice(itemIndex, 1);
+        return {
+          ...prev,
+          state: deriveFromSelection(
+            { ...prev.state, days: stampDays(prev.state, days) },
+            selected,
+            prev.request,
+            locale,
+            placements
+          ),
+        };
+      }
+
+      target.items.splice(itemIndex, 1);
+      const pax = prev.request?.pax ?? DEFAULT_TRIP_REQUEST.pax;
+      const filled = days.map((day) => fillDay(day, prev.state.offers, pax));
+      const next = deriveFromSelection(
+        { ...prev.state, days: stampDays(prev.state, filled) },
+        prev.state.selectedOfferIds,
+        prev.request,
+        locale
+      );
+      return { ...prev, state: next };
+    });
+    schedulePersist();
+  }, [locale]);
+
+  const setRecommendMode = useCallback((mode: RecommendMode, agents: AgentProfile[] = []) => {
+    const parsed = parseRecommendMode(mode);
+    updateStore((prev) => {
+      const scores = scoresFromAgents(agents);
+      const recommended = recommendedFromStrategy(prev.state, prev.request, parsed, scores);
+      const follows = sameIdSet(prev.state.selectedOfferIds, prev.state.recommendedOfferIds);
+
+      // 幂等：模式与推荐集都没变时直接返回原对象，updateStore 会跳过通知。
+      // 没有这道闸门，重复的 setRecommendMode 会不断生成新的 quote 对象，
+      // 让依赖 quote 的 effect 反复触发（Maximum update depth exceeded）。
+      if (
+        prev.recommendMode === parsed &&
+        prev.state.recommendMode === parsed &&
+        sameIdSet(recommended, prev.state.recommendedOfferIds) &&
+        (!follows || sameIdSet(prev.state.selectedOfferIds, recommended))
+      ) {
+        return prev;
+      }
+
+      const nextState = follows
+        ? deriveFromSelection(
+            { ...prev.state, recommendMode: parsed, recommendedOfferIds: recommended },
+            recommended,
+            prev.request,
+            locale
+          )
+        : { ...prev.state, recommendMode: parsed, recommendedOfferIds: recommended };
+      return { ...prev, recommendMode: parsed, state: nextState };
+    });
+    schedulePersist();
+  }, [locale]);
+
+  const applyRecommended = useCallback(() => {
+    updateStore((prev) => ({
+      ...prev,
+      state: deriveFromSelection(prev.state, prev.state.recommendedOfferIds, prev.request, locale),
+    }));
+    schedulePersist();
+  }, [locale]);
+
+  const addCustomToDay = useCallback(
+    (dayIndex: number, draft: { time: string; title: string; note?: string }) => {
+      const title = draft.title.trim();
+      if (!title) return;
+      updateStore((prev) => {
+        const days = currentDaysOf(prev.state).map((day) => ({
+          ...day,
+          items: [...day.items],
+        }));
+        const target = days.find((day) => day.index === dayIndex);
+        if (!target) return prev;
+        target.items.push({
+          time: draft.time.trim(),
+          title,
+          note: draft.note?.trim() || undefined,
+        });
+        const pax = prev.request?.pax ?? DEFAULT_TRIP_REQUEST.pax;
+        const filled = days.map((day) => fillDay(day, prev.state.offers, pax));
+        return {
+          ...prev,
+          state: deriveFromSelection(
+            { ...prev.state, days: stampDays(prev.state, filled) },
+            prev.state.selectedOfferIds,
+            prev.request,
+            locale
+          ),
+        };
+      });
+      schedulePersist();
+    },
+    [locale]
+  );
+
+  return {
+    state: store.state,
+    lastRequest: store.request,
+    start,
+    reset,
+    toggleOffer,
+    setCategorySelection,
+    addOfferToDay,
+    removeDayItem,
+    addCustomToDay,
+    setRecommendMode,
+    applyRecommended,
+  };
+}
+
+function stampDays(prev: RunState, days: ItineraryDay[]): DayState[] {
+  return days.map((day) => {
+    const existing = prev.days.find((entry) => entry.index === day.index);
+    return existing
+      ? { ...existing, day }
+      : { index: day.index, date: day.date, theme: day.theme, text: "", day };
+  });
 }
 
 function sleep(ms: number): Promise<void> {

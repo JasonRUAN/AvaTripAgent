@@ -33,8 +33,13 @@
   /* ---------- 功能色 ---------- */
   --color-mint-500: #17c964;
   --color-mint-100: #e6f9ec;
-  --color-amber-500: #ffb020;
+  --color-amber-50: #fff8eb;
   --color-amber-100: #fff4e0;
+  --color-amber-400: #ffc14d;
+  --color-amber-500: #ffb020;
+  --color-amber-600: #f59a00;
+  --color-amber-700: #c67a00;
+  --color-amber-800: #8a5400;
   --color-coral-500: #ff5a5f;
   --color-coral-100: #ffeaea;
 

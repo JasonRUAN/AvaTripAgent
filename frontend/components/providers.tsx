@@ -11,6 +11,8 @@ import {
 } from "wagmi";
 import { avalancheFuji } from "wagmi/chains";
 import { injected, metaMask } from "wagmi/connectors";
+import { LocaleProvider } from "@/lib/i18n/context";
+import type { Locale } from "@/lib/i18n/config";
 
 const FUJI_RPC =
   process.env.NEXT_PUBLIC_FUJI_RPC ?? "https://api.avax-test.network/ext/bc/C/rpc";
@@ -19,7 +21,11 @@ export const wagmiConfig = createConfig({
   chains: [avalancheFuji],
   connectors: [metaMask(), injected()],
   transports: {
-    [avalancheFuji.id]: http(FUJI_RPC),
+    [avalancheFuji.id]: http(FUJI_RPC, {
+      timeout: 12_000,
+      retryCount: 1,
+      retryDelay: 400,
+    }),
   },
   storage: createStorage({ storage: cookieStorage, key: "avatrip.wagmi" }),
   ssr: true,
@@ -31,7 +37,13 @@ declare module "wagmi" {
   }
 }
 
-export function AppProviders({ children }: { children: ReactNode }) {
+export function AppProviders({
+  children,
+  initialLocale,
+}: {
+  children: ReactNode;
+  initialLocale: Locale;
+}) {
   const [queryClient] = useState(
     () =>
       new QueryClient({
@@ -47,7 +59,9 @@ export function AppProviders({ children }: { children: ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <WagmiProvider config={wagmiConfig}>{children}</WagmiProvider>
+      <WagmiProvider config={wagmiConfig}>
+        <LocaleProvider initialLocale={initialLocale}>{children}</LocaleProvider>
+      </WagmiProvider>
     </QueryClientProvider>
   );
 }

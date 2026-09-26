@@ -5,6 +5,9 @@ import {
 } from "viem";
 import { BACKEND_URL, CONTRACTS, VOUCHER_ABI, isDeployed } from "./contracts";
 import { maskAddress } from "./format";
+import { getDict, interpolate } from "./i18n";
+import type { Locale } from "./i18n/config";
+import { loadVoucherMetadata, saveVoucherMetadata } from "./session-cache";
 import type {
   Address,
   CategoryCode,
@@ -18,8 +21,10 @@ import type {
  *
  * 「我的凭证」的唯一数据源是 Fuji 上的 `TravelVoucher` 合约：
  * 合约只会 `getVoucher` 出一个纯数字/字符串结构，没有任何 mock 兜底。
- * `metadata`（各品类结构化明细）优先取 `tokenURI` 指向的链下 JSON，
- * 取不到时用链上字段合成，保证卡片始终有可读内容。
+ *
+ * 列表先用 `multicall` 读完 `ownerOf` + `getVoucher` 立刻渲染；
+ * `metadata` 后补，且带超时——链上 `tokenURI` 仍指向已停用的
+ * `localhost:3001`，浏览器直连会卡到连接超时，绝不能阻塞列表。
  */
 
 /** 服务商 Agent 地址 → 展示名（对应 AgentRegistry 里的注册项） */
@@ -29,6 +34,9 @@ const AGENT_NAMES: Record<string, string> = {
   [CONTRACTS.agents.attraction.toLowerCase()]: "AvaTickets Agent",
   [CONTRACTS.agents.dining.toLowerCase()]: "AvaTables Agent",
 };
+
+/** 链下明细请求超时。死掉的 tokenURI 绝不能把整页卡住。 */
+const METADATA_TIMEOUT_MS = 2_500;
 
 export function providerName(provider: string): string {
   return AGENT_NAMES[provider.toLowerCase()] ?? maskAddress(provider);
@@ -63,16 +71,71 @@ async function inChunks<T, R>(
   return results;
 }
 
+function fallbackMetadata(
+  tokenId: bigint | string,
+  title: string,
+  code: string,
+  locale: Locale
+): VoucherMetadata {
+  const dict = getDict(locale).errors;
+  return {
+    name:
+      title ||
+      interpolate(dict.voucherFallbackName, { id: String(tokenId) }),
+    description: dict.voucherFallbackDesc,
+    image: "",
+    attributes: [{ trait_type: "Code", value: code }],
+    details: {},
+  };
+}
+
+function toDetail(
+  tokenId: bigint,
+  onChain: {
+    orderId: bigint;
+    provider: Address;
+    holder: Address;
+    category: number;
+    code: string;
+    title: string;
+    metadataHash: `0x${string}`;
+    validFrom: bigint;
+    validTo: bigint;
+    status: number;
+  },
+  locale: Locale
+): VoucherDetail {
+  return {
+    tokenId: tokenId.toString(),
+    orderId: onChain.orderId.toString(),
+    provider: onChain.provider,
+    providerName: providerName(onChain.provider),
+    holder: onChain.holder,
+    category: (Number(onChain.category) || 0) as CategoryCode,
+    code: onChain.code,
+    title: onChain.title,
+    metadataHash: onChain.metadataHash,
+    validFrom: Number(onChain.validFrom),
+    validTo: Number(onChain.validTo),
+    status: STATUS[Number(onChain.status)] ?? "Issued",
+    metadata: fallbackMetadata(tokenId, onChain.title, onChain.code, locale),
+  };
+}
+
 /**
  * 枚举某个地址在链上当前持有的全部凭证。
  *
  * 合约是普通 ERC-721（非 Enumerable），没有 `tokenOfOwnerByIndex`，
  * 因此按 `nextTokenId` 遍历所有已签发 tokenId，再用 `ownerOf` 判定归属
  * —— `Voucher.holder` 是签发时的快照，转赠后会失真，不能当持有者用。
+ *
+ * `ownerOf` / `getVoucher` 走 Multicall3，整页只需 2～3 次 RPC；
+ * 链下 metadata 不阻塞返回。
  */
 export async function fetchHolderVouchers(
   client: PublicClient,
-  holder: Address
+  holder: Address,
+  locale: Locale
 ): Promise<VoucherDetail[]> {
   if (!isDeployed) return [];
 
@@ -89,36 +152,105 @@ export async function fetchHolderVouchers(
   const ids = Array.from({ length: issued }, (_, index) => BigInt(index + 1));
   const target = holder.toLowerCase();
 
-  const owners = await inChunks(ids, 25, async (id) => {
-    try {
-      const owner = await client.readContract({
-        address: CONTRACTS.travelVoucher,
-        abi: VOUCHER_ABI,
-        functionName: "ownerOf",
-        args: [id],
-      });
-      return owner.toLowerCase();
-    } catch (error) {
-      // tokenId 不存在时 ownerOf 会 revert（ERC721NonexistentToken），跳过即可
-      if (isRevert(error)) return null;
-      throw error;
-    }
-  });
-
+  const owners = await readOwners(client, ids);
   const mine = ids.filter((_, index) => owners[index] === target);
   if (mine.length === 0) return [];
 
-  const details = await inChunks(mine, 10, (id) => readVoucher(client, id));
+  const details = await readVoucherBatch(client, mine, locale);
 
-  return details
-    .filter((voucher): voucher is VoucherDetail => voucher !== null)
-    .sort((a, b) => Number(BigInt(b.tokenId) - BigInt(a.tokenId)));
+  return details.sort((a, b) => Number(BigInt(b.tokenId) - BigInt(a.tokenId)));
 }
 
-/** 读取单个 tokenId 的链上凭证 */
+/**
+ * 给已有列表补链下明细；失败或超时不影响已展示的卡片。
+ *
+ * 明细按 tokenId 缓存（内存 + sessionStorage）：第二次进页面这些请求直接命中
+ * 缓存返回，不用再等那串 2.5s 超时的链下请求，卡片一次成型不会中途变形。
+ */
+export async function enrichVoucherMetadata(
+  items: VoucherDetail[]
+): Promise<VoucherDetail[]> {
+  if (items.length === 0) return items;
+
+  // 只读没缓存过的，命中缓存的 token 一次网络请求都不发
+  const missing = items.filter((item) => !loadVoucherMetadata(item.tokenId));
+  await inChunks(missing, 8, async (item) => {
+    const remote = await fetchMetadataJson(metadataFallbackUrl(item.tokenId));
+    if (remote) saveVoucherMetadata(item.tokenId, remote);
+  });
+
+  return items.map((item) => {
+    const metadata = loadVoucherMetadata(item.tokenId);
+    return metadata ? { ...item, metadata } : item;
+  });
+}
+
+async function readOwners(
+  client: PublicClient,
+  ids: bigint[]
+): Promise<(string | null)[]> {
+  try {
+    const results = await client.multicall({
+      contracts: ids.map((id) => ({
+        address: CONTRACTS.travelVoucher,
+        abi: VOUCHER_ABI,
+        functionName: "ownerOf" as const,
+        args: [id] as const,
+      })),
+      allowFailure: true,
+    });
+    return results.map((item) =>
+      item.status === "success" ? item.result.toLowerCase() : null
+    );
+  } catch {
+    return inChunks(ids, 25, async (id) => {
+      try {
+        const owner = await client.readContract({
+          address: CONTRACTS.travelVoucher,
+          abi: VOUCHER_ABI,
+          functionName: "ownerOf",
+          args: [id],
+        });
+        return owner.toLowerCase();
+      } catch (error) {
+        if (isRevert(error)) return null;
+        throw error;
+      }
+    });
+  }
+}
+
+async function readVoucherBatch(
+  client: PublicClient,
+  ids: bigint[],
+  locale: Locale
+): Promise<VoucherDetail[]> {
+  try {
+    const results = await client.multicall({
+      contracts: ids.map((id) => ({
+        address: CONTRACTS.travelVoucher,
+        abi: VOUCHER_ABI,
+        functionName: "getVoucher" as const,
+        args: [id] as const,
+      })),
+      allowFailure: true,
+    });
+    return results.flatMap((item, index) => {
+      const id = ids[index];
+      if (!id || item.status !== "success") return [];
+      return [toDetail(id, item.result, locale)];
+    });
+  } catch {
+    const details = await inChunks(ids, 10, (id) => readVoucher(client, id, locale));
+    return details.filter((voucher): voucher is VoucherDetail => voucher !== null);
+  }
+}
+
+/** 读取单个 tokenId 的链上凭证（不阻塞等 metadata） */
 export async function readVoucher(
   client: PublicClient,
-  tokenId: bigint
+  tokenId: bigint,
+  locale: Locale
 ): Promise<VoucherDetail | null> {
   try {
     const onChain = await client.readContract({
@@ -128,89 +260,29 @@ export async function readVoucher(
       args: [tokenId],
     });
 
-    // getVoucher 返回的是单个 struct（含 string 动态成员），viem 解成对象
-    const {
-      orderId,
-      provider,
-      holder,
-      category,
-      code,
-      title,
-      metadataHash,
-      validFrom,
-      validTo,
-      status,
-    } = onChain;
-
-    const categoryCode = (Number(category) || 0) as CategoryCode;
-
-    return {
-      tokenId: tokenId.toString(),
-      orderId: orderId.toString(),
-      provider,
-      providerName: providerName(provider),
-      holder,
-      category: categoryCode,
-      code,
-      title,
-      metadataHash,
-      validFrom: Number(validFrom),
-      validTo: Number(validTo),
-      status: STATUS[Number(status)] ?? "Issued",
-      metadata: await loadMetadata(client, tokenId, title, code),
-    };
+    return toDetail(tokenId, onChain, locale);
   } catch (error) {
-    // 单个 token 解码异常不应该给出「没有凭证」的假象
     if (isRevert(error)) return null;
     throw error;
   }
 }
 
-/** 链下明细：`tokenURI` 优先，失败时退回后端 metadata 端点 */
-async function loadMetadata(
-  client: PublicClient,
-  tokenId: bigint,
-  title: string,
-  code: string
-): Promise<VoucherMetadata> {
-  const remote = await fetchMetadata(client, tokenId);
-  if (remote) return remote;
-
-  return {
-    name: title || `凭证 #${tokenId}`,
-    description: "Avalanche Fuji 链上凭证（链下明细暂不可用）",
-    image: "",
-    attributes: [{ trait_type: "Code", value: code }],
-    details: {},
-  };
-}
-
-async function fetchMetadata(
-  client: PublicClient,
-  tokenId: bigint
-): Promise<VoucherMetadata | null> {
-  try {
-    const uri = await client.readContract({
-      address: CONTRACTS.travelVoucher,
-      abi: VOUCHER_ABI,
-      functionName: "tokenURI",
-      args: [tokenId],
-    });
-
-    if (uri) {
-      const metadata = await fetchMetadataJson(uri);
-      if (metadata) return metadata;
-    }
-  } catch {
-    // 合约未 setBaseURI 时 tokenURI 不可用，继续走后端兜底
+/**
+ * 浏览器走 Next rewrite 的同源路径，这样 Cursor 只转发 13000 时
+ * 也能打到本机 orchestrator，而不是用户电脑上的 localhost:3001。
+ */
+function metadataFallbackUrl(tokenId: string): string {
+  if (typeof window !== "undefined") {
+    return `/api/vouchers/${tokenId}/metadata`;
   }
-
-  return fetchMetadataJson(`${BACKEND_URL}/api/vouchers/${tokenId}/metadata`);
+  return `${BACKEND_URL}/api/vouchers/${tokenId}/metadata`;
 }
 
 async function fetchMetadataJson(url: string): Promise<VoucherMetadata | null> {
   try {
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
+    });
     if (!response.ok) return null;
 
     const payload = (await response.json()) as VoucherMetadata;
