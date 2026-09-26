@@ -1,0 +1,115 @@
+version: "3.8"
+
+x-common-env: &common-env
+  NODE_ENV: production
+  FRONTEND_ORIGIN: ${FRONTEND_ORIGIN}
+  PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+  INTERNAL_TOKEN: ${INTERNAL_TOKEN}
+  OPENAI_BASE_URL: ${OPENAI_BASE_URL}
+  OPENAI_API_KEY: ${OPENAI_API_KEY}
+  OPENAI_MODEL: ${OPENAI_MODEL}
+  OPENAI_TIMEOUT_MS: ${OPENAI_TIMEOUT_MS}
+  OPENAI_TEMPERATURE: ${OPENAI_TEMPERATURE}
+  OPENAI_REASONING_EFFORT: ${OPENAI_REASONING_EFFORT}
+  SYNTH_DAY_CONCURRENCY: ${SYNTH_DAY_CONCURRENCY}
+  FUJI_RPC: ${FUJI_RPC}
+  ORCHESTRATOR_KEY: ${ORCHESTRATOR_KEY}
+  FLIGHT_AGENT_KEY: ${FLIGHT_AGENT_KEY}
+  HOTEL_AGENT_KEY: ${HOTEL_AGENT_KEY}
+  ATTRACTION_AGENT_KEY: ${ATTRACTION_AGENT_KEY}
+  DINING_AGENT_KEY: ${DINING_AGENT_KEY}
+
+x-healthcheck: &healthcheck
+  test:
+    [
+      "CMD",
+      "node",
+      "-e",
+      "fetch('http://127.0.0.1:'+(process.env.PORT||'3010')+'/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+    ]
+  interval: 15s
+  timeout: 5s
+  retries: 5
+  start_period: 20s
+
+services:
+  flight:
+    image: rzexin/avatrip-agents:v1.0.0
+    container_name: avatrip-agent-flight
+    command: ["pnpm", "start:provider"]
+    ports:
+      - "3011:3011"
+    environment:
+      <<: *common-env
+      PORT: "3011"
+      AGENT_CATEGORY: flight
+      AGENT_NAME: AvaFlights
+    restart: unless-stopped
+    healthcheck: *healthcheck
+
+  hotel:
+    image: rzexin/avatrip-agents:v1.0.0
+    container_name: avatrip-agent-hotel
+    command: ["pnpm", "start:provider"]
+    ports:
+      - "3012:3012"
+    environment:
+      <<: *common-env
+      PORT: "3012"
+      AGENT_CATEGORY: hotel
+      AGENT_NAME: AvaStays
+    restart: unless-stopped
+    healthcheck: *healthcheck
+
+  attraction:
+    image: rzexin/avatrip-agents:v1.0.0
+    container_name: avatrip-agent-attraction
+    command: ["pnpm", "start:provider"]
+    ports:
+      - "3013:3013"
+    environment:
+      <<: *common-env
+      PORT: "3013"
+      AGENT_CATEGORY: attraction
+      AGENT_NAME: AvaTickets
+    restart: unless-stopped
+    healthcheck: *healthcheck
+
+  dining:
+    image: rzexin/avatrip-agents:v1.0.0
+    container_name: avatrip-agent-dining
+    command: ["pnpm", "start:provider"]
+    ports:
+      - "3014:3014"
+    environment:
+      <<: *common-env
+      PORT: "3014"
+      AGENT_CATEGORY: dining
+      AGENT_NAME: AvaTables
+    restart: unless-stopped
+    healthcheck: *healthcheck
+
+  orchestrator:
+    image: rzexin/avatrip-agents:v1.0.0
+    container_name: avatrip-agent-orchestrator
+    command: ["pnpm", "start:orchestrator"]
+    ports:
+      - "3010:3010"
+    environment:
+      <<: *common-env
+      PORT: "3010"
+      FLIGHT_AGENT_ENDPOINT: http://flight:3011
+      HOTEL_AGENT_ENDPOINT: http://hotel:3012
+      ATTRACTION_AGENT_ENDPOINT: http://attraction:3013
+      DINING_AGENT_ENDPOINT: http://dining:3014
+    depends_on:
+      flight:
+        condition: service_healthy
+      hotel:
+        condition: service_healthy
+      attraction:
+        condition: service_healthy
+      dining:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck: *healthcheck
