@@ -40,6 +40,7 @@ export default function AdminPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [health, setHealth] = useState<AgentHealth>({ status: "idle" });
   const [editing, setEditing] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
 
   const [filterCategory, setFilterCategory] = useState<CategoryCode | "all">("all");
   const [filterStatus, setFilterStatus] = useState<"all" | "active" | "inactive">("all");
@@ -63,6 +64,7 @@ export default function AdminPage() {
     setWebsite(item.website);
     setEndpoint(item.endpoint);
     setEditing(true);
+    setFormOpen(true);
     setMessage(null);
     setHealth({ status: "idle" });
     formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -164,27 +166,50 @@ export default function AdminPage() {
             <p className="text-sm font-bold text-ink-800">
               {editing ? t("admin.updateAgent") : t("admin.registerAgent")}
             </p>
-            {editing ? (
+            {formOpen ? (
+              <div className="flex items-center gap-3">
+                {editing ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditing(false);
+                      setAgent("");
+                      setName("");
+                      setCategories([]);
+                      setDescription("");
+                      setWebsite("");
+                      setEndpoint("");
+                      setHealth({ status: "idle" });
+                      setMessage(null);
+                      setFormOpen(false);
+                    }}
+                    className="cursor-pointer text-xs font-bold text-ink-400 hover:text-brand-700"
+                  >
+                    {t("admin.clearForm")}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setFormOpen(false)}
+                    className="cursor-pointer text-xs font-bold text-ink-400 hover:text-brand-700"
+                  >
+                    {t("admin.collapseForm")}
+                  </button>
+                )}
+              </div>
+            ) : (
               <button
                 type="button"
-                onClick={() => {
-                  setEditing(false);
-                  setAgent("");
-                  setName("");
-                  setCategories([]);
-                  setDescription("");
-                  setWebsite("");
-                  setEndpoint("");
-                  setHealth({ status: "idle" });
-                  setMessage(null);
-                }}
-                className="cursor-pointer text-xs font-bold text-ink-400 hover:text-brand-700"
+                onClick={() => setFormOpen(true)}
+                className="sky-gradient cursor-pointer rounded-full px-4 py-1.5 text-xs font-bold text-white shadow-soft"
               >
-                {t("admin.clearForm")}
+                + {t("admin.addAgent")}
               </button>
-            ) : null}
+            )}
           </div>
 
+          {formOpen ? (
+            <>
           <div className="flex flex-col gap-1.5">
             <span className="text-[11px] font-bold tracking-wide text-ink-400">
               {t("admin.endpointLabel")}
@@ -314,6 +339,10 @@ export default function AdminPage() {
                 : t("admin.submitRegister")}
           </button>
           {message ? <p className="text-xs text-ink-600">{message}</p> : null}
+            </>
+          ) : (
+            <p className="text-xs text-ink-400">{t("admin.collapsedHint")}</p>
+          )}
         </div>
       ) : null}
 
